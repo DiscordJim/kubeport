@@ -1,9 +1,14 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
-use axum::{body::Bytes, extract::{ws::WebSocket, Path, State, WebSocketUpgrade}, http::StatusCode, response::{IntoResponse, Response}, routing::{get, post}, Router};
+use axum::{body::Bytes, extract::{ws::{Message, WebSocket}, Path, State, WebSocketUpgrade}, http::StatusCode, response::Response, routing::{get, post}, Router};
 use dashmap::DashMap;
-use tokio::{io::AsyncReadExt, net::{TcpListener, TcpSocket, TcpStream}};
+use futures_util::{FutureExt, SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
+use uuid7::Uuid;
+
+use crate::commons::{ProtocolMessage, WebsocketProxy};
 
 pub const SERVER_CONTROL_PORT: u16 = 7969;
 
@@ -60,9 +65,9 @@ pub async fn run_server_listener(server: Arc<TcpListener>) {
 pub async fn run_kubeport_server(server: KubeportServer) {
 
     let app = Router::new()
-        .route("/:service", get(handle_ws))
+        .route("/forward/:service", get(handle_ws))
         .route("/available/:name", post(check_availability))
-        .route("/forward/:service", post(connect_to_route))
+       // .route("/forward/:service", post(connect_to_route))
         .with_state(server);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
@@ -81,27 +86,93 @@ async fn handle_ws(ws: WebSocketUpgrade) -> Response {
     ws.on_upgrade(handle_websocket_connection)
 }
 
-async fn handle_websocket_connection(ws: WebSocket) {
-    println!("Got a websocket request.");
+
+
+async fn send_protocol_message(ws: &mut WebSocket, message: ProtocolMessage) -> Result<()> {
+    ws.send(Message::Binary(message.serialize().await?)).await?;
+
+    Ok(())
 }
 
-async fn connect_to_route(State(state): State<KubeportServer>, Path(service): Path<String>, body: Bytes) -> (StatusCode, String) {
-    // println!("Waiting on bro");
-    // let mut bro = state.listener.accept().await.unwrap().0;
+async fn handle_websocket_connection(mut ws: WebSocket) {
+    println!("Got a websocket request.");
 
-    // let mut boof = [0u8; 4];
-    // println!("Waiting on read");
-    // let buf = bro.read(&mut boof).await.unwrap();
+    send_protocol_message(&mut ws, ProtocolMessage::Open(Uuid::default())).await.unwrap();
+    // let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await.unwrap();
+    // println!("Created a listener on {:?}", listener.local_addr());
 
+    // let proxy = WebsocketProxy::create(ws);
 
-    // println!("Bro: {:?}", boof);
+   
+   
 
-    println!("Hello: {:?}", body);
+    // loop {
+    //     let (mut t_stream, s_addr) = listener.accept().await.unwrap();
+    //     tokio::spawn({
 
-    let conn = TcpStream::connect("127.0.0.1:7969").await.unwrap();
-    println!("CONNECTED");
+    //         let proxy = proxy.clone();
+    //         async move {
+    //             accept_connection(t_stream, proxy).await.unwrap();
+    //         }
+    //     });
+    
+    // }
     
 
-    (StatusCode::ACCEPTED, "hello".to_string())
+
+    println!("Done");
+
 }
+
+async fn accept_connection(t_stream: TcpStream, proxy: WebsocketProxy) -> Result<()> {
+    
+    println!("GOT A CONNECTION");
+
+    let (mut t_read, mut t_write) = Box::leak(Box::new(t_stream)).split();
+    
+
+    tokio::spawn({
+        let proxy = proxy.clone();
+        async move {
+        
+        loop {
+            let mut buffer = [0u8; 4096];
+            let b = t_read.read(&mut buffer).await.unwrap();
+            //println!("Received some bytes. Forwarding them. {}", b);
+            proxy.send(buffer[..b].to_vec()).await.unwrap();
+        }
+    }});
+
+
+
+    loop {
+        if let Ok(mut wow) = proxy.recv().await {
+            t_write.write_all(&mut wow).await.unwrap();
+        }
+    }
+}
+
+// async fn connect_to_service(State(state): State<KubeportServer>, Path(service): Path<String>) -> (StatusCode, String) {
+
+// }
+
+// async fn connect_to_route(State(state): State<KubeportServer>, Path(service): Path<String>, body: Bytes) -> (StatusCode, String) {
+//     // println!("Waiting on bro");
+//     // let mut bro = state.listener.accept().await.unwrap().0;
+
+//     // let mut boof = [0u8; 4];
+//     // println!("Waiting on read");
+//     // let buf = bro.read(&mut boof).await.unwrap();
+
+
+//     // println!("Bro: {:?}", boof);
+
+//     println!("Hello: {:?}", body);
+
+//     let conn = TcpStream::connect("127.0.0.1:7969").await.unwrap();
+//     println!("CONNECTED");
+    
+
+//     (StatusCode::ACCEPTED, "hello".to_string())
+// }
 
