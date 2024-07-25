@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.86"
+anyhow = { version = "1.0.86", features = ["backtrace"] }
 axum = { version = "0.7.5", features = ["ws"] }
 bincode = "1.3.3"
 clap = { version = "4.5.11", features = ["derive", "env"] }

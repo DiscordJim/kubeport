@@ -4,12 +4,13 @@ use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
 use dashmap::DashMap;
-use futures_util::StreamExt;
-use tokio::{net::TcpStream, sync::Mutex};
+use futures_util::{SinkExt, StreamExt};
+use serde::Serialize;
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::OwnedWriteHalf, TcpStream}, sync::Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use uuid7::Uuid;
 
-use crate::commons::ProtocolMessage;
+use crate::commons::{ProtocolMessage, WebsocketMessage};
 
 
 
@@ -22,32 +23,60 @@ pub async fn run_client() -> Result<()> {
     let service_port: u16 = 4032;
 
 
-    let mut ws_stream = connect_async("ws://localhost:8000/forward/name").await?.0;
-    let connection_map: DashMap<Uuid, Arc<Mutex<TcpStream>>> = DashMap::new();
+    let ws_stream = connect_async("ws://localhost:8000/forward/name").await?.0;
+    let (ws_write, mut ws_read) = ws_stream.split();
+    
+    let ws_write = Arc::new(Mutex::new(ws_write));
+
+    let connection_map: DashMap<Uuid, OwnedWriteHalf> = DashMap::new();
 
     
 
-    'master: while let Some(Ok(Message::Binary(msg))) = ws_stream.next().await {
-        match bincode::deserialize::<ProtocolMessage>(&msg)? {
-            ProtocolMessage::Message(msg) => {
-                if !connection_map.contains_key(&msg.id) {
-                    continue 'master;
-                }
-                let b = connection_map.get(&msg.id);
-
-            },
-            ProtocolMessage::Open(msg) => {
-                println!("Opening a new channel under {}.", msg);
-                if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127,0,0,1], service_port))).await {
-                    let guarded = Arc::new(Mutex::new(stream));
-
-
-
-                    connection_map.insert(msg, Arc::clone(&guarded));
+    loop {
+        if let Some(Ok(Message::Binary(msg))) = ws_read.next().await {
+            match bincode::deserialize::<ProtocolMessage>(&msg)? {
+                ProtocolMessage::Message(msg) => {
+                    if let Some(mut res) = connection_map.get_mut(&msg.id) {
+                        res.write_all(&msg.data).await?;
+                    }
+                },
+                ProtocolMessage::Open(msg) => {
+                    println!("Opening a new channel under {}.", msg);
+                    if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127,0,0,1], service_port))).await {
+                        // let guarded = Arc::new(stream);
+    
+                        let (mut read, write) = stream.into_split();
+    
+                        tokio::spawn({
+                            let id = msg.clone();
+                            let ws_write = Arc::clone(&ws_write);
+                            
+                            async move {
+                            loop {
+                                let mut buffer = [0u8; 16409];
+                                if let Ok(bytes_read) = read.read(&mut buffer).await {
+                                    if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
+                                        id,
+                                        data: buffer[..bytes_read].to_vec()
+                                    }).serialize().await {
+                                        
+                                        ws_write.lock().await.send(Message::Binary(pbytes)).await.unwrap();
+                                    }
+                                    
+                                }
+                            }
+                        }});
+    
+    
+                        connection_map.insert(msg, write);
+                    }
                 }
             }
         }
+    
     }
+    
+    println!("done");
 
 
     // println!("Connected to the websocket.");

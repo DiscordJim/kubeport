@@ -4,10 +4,8 @@
 use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket};
 use flume::{Receiver, Sender};
-use futures_util::{stream::{SplitSink, SplitStream}, SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::{tcp::{ReadHalf, WriteHalf}, TcpStream}};
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use uuid7::Uuid;
 
 
@@ -52,10 +50,14 @@ impl WebsocketProxy {
             let send = send.clone();
             async move {
                 while let Some(Ok(Message::Binary(bin))) = ws_receiver.next().await {
-                    send.send_async(WebsocketMessage {
-                        id: Uuid::default(),
-                        data: bin
-                    }).await.unwrap();
+
+                    if let Ok(ProtocolMessage::Message(msg)) = bincode::deserialize(&bin) {
+                        send.send_async(WebsocketMessage {
+                            id: Uuid::default(),
+                            data: bin
+                        }).await.unwrap();
+                    }
+                    
                 }
             }
         });
@@ -64,7 +66,7 @@ impl WebsocketProxy {
             let recv = recv.clone();
             async move {
                 while let Ok(msg) = recv.recv_async().await {
-                    ws_sender.send(Message::Binary(msg.data)).await.unwrap();
+                    ws_sender.send(Message::Binary(ProtocolMessage::Message(msg).serialize().await.unwrap())).await.unwrap();
                 }
             }
         });
@@ -78,12 +80,12 @@ impl WebsocketProxy {
         }
     }
 
-    pub async fn recv(&self) -> Result<Vec<u8>> {
+    pub async fn recv(&self, id: &Uuid) -> Result<Vec<u8>> {
         Ok(self.recv.recv_async().await.map(|c| c.data)?)
     }
-    pub async fn send(&self, data: Vec<u8>) -> Result<()> {
+    pub async fn send(&self, id: &Uuid, data: Vec<u8>) -> Result<()> {
         self.send.send_async(WebsocketMessage {
-            id: Uuid::default(),
+            id: id.clone(),
             data
         }).await?;
 

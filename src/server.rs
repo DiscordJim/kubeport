@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
-use uuid7::Uuid;
+use uuid7::{uuid7, Uuid};
 
 use crate::commons::{ProtocolMessage, WebsocketProxy};
 
@@ -95,28 +95,33 @@ async fn send_protocol_message(ws: &mut WebSocket, message: ProtocolMessage) -> 
 }
 
 async fn handle_websocket_connection(mut ws: WebSocket) {
-    println!("Got a websocket request.");
+
+    let id = uuid7();
+    println!("Got a websocket request. Opening under ID {:?}", id);
 
     send_protocol_message(&mut ws, ProtocolMessage::Open(Uuid::default())).await.unwrap();
-    // let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await.unwrap();
-    // println!("Created a listener on {:?}", listener.local_addr());
+    let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await.unwrap();
+    println!("Created a listener on {:?}", listener.local_addr());
 
-    // let proxy = WebsocketProxy::create(ws);
+
+
+    let proxy = WebsocketProxy::create(ws);
 
    
    
 
-    // loop {
-    //     let (mut t_stream, s_addr) = listener.accept().await.unwrap();
-    //     tokio::spawn({
+    loop {
+        let t_stream = listener.accept().await.unwrap().0;
+        tokio::spawn({
 
-    //         let proxy = proxy.clone();
-    //         async move {
-    //             accept_connection(t_stream, proxy).await.unwrap();
-    //         }
-    //     });
+            let proxy = proxy.clone();
+            let id = id.clone();
+            async move {
+                accept_connection(t_stream, proxy, id).await.unwrap();
+            }
+        });
     
-    // }
+    }
     
 
 
@@ -124,7 +129,7 @@ async fn handle_websocket_connection(mut ws: WebSocket) {
 
 }
 
-async fn accept_connection(t_stream: TcpStream, proxy: WebsocketProxy) -> Result<()> {
+async fn accept_connection(t_stream: TcpStream, proxy: WebsocketProxy, id: Uuid) -> Result<()> {
     
     println!("GOT A CONNECTION");
 
@@ -133,20 +138,21 @@ async fn accept_connection(t_stream: TcpStream, proxy: WebsocketProxy) -> Result
 
     tokio::spawn({
         let proxy = proxy.clone();
+
         async move {
         
         loop {
             let mut buffer = [0u8; 4096];
             let b = t_read.read(&mut buffer).await.unwrap();
             //println!("Received some bytes. Forwarding them. {}", b);
-            proxy.send(buffer[..b].to_vec()).await.unwrap();
+            proxy.send(&id, buffer[..b].to_vec()).await.unwrap();
         }
     }});
 
 
 
     loop {
-        if let Ok(mut wow) = proxy.recv().await {
+        if let Ok(mut wow) = proxy.recv(&id).await {
             t_write.write_all(&mut wow).await.unwrap();
         }
     }
