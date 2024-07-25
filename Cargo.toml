@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bore = "0.4.1"
+axum = "0.7.5"
+dashmap = "6.0.1"
+tokio = { version = "1.39.1", features = ["macros", "rt", "rt-multi-thread"] }
