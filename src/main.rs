@@ -1,12 +1,31 @@
-use kubeport::server::KubeportServer;
+use anyhow::Result;
+use clap::{Parser};
+use kubeport::{client::run_client, server::{run_kubeport_server, KubeportServer}};
 
 
+#[derive(Parser, Debug)]
+pub struct Args {
+    #[clap(subcommand)]
+    command: Command
+}
+
+
+#[derive(Parser, Debug, PartialEq)]
+pub enum Command {
+    Client,
+    Server
+}
 
 #[tokio::main]
-async fn main() {
-    let port_range = 10000..=10_050;
+async fn run(command: Command) -> Result<()>{
+    if command == Command::Client {
+        run_client().await
+    } else {
+        KubeportServer::spin().await
+    }
+}
 
-    let server = KubeportServer::spin().await;
 
-    println!("Hello, world!");
+fn main() -> Result<()> {
+    run(Args::parse().command)
 }
