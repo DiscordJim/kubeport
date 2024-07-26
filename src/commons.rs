@@ -94,8 +94,10 @@ impl<T> SimpleChannel<T> {
 }
 
 pub struct ChannelDistributor<U, T>
-    where U: Hash + Eq + Clone
+    where
+        U: Hash + Eq + Clone
     {
+
     buf_size: usize,
     cmap: DashMap<U, Arc<SimpleChannel<T>>>
 }

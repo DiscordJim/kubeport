@@ -1,27 +1,24 @@
-use std::{net::SocketAddr, process::exit, str::from_utf8, sync::Arc};
+use std::{net::SocketAddr, ops::Index, process::exit, str::from_utf8, sync::Arc};
 
 use anyhow::Result;
-use axum::{body::Bytes, extract::{ws::{Message, WebSocket}, Path, State, WebSocketUpgrade}, http::StatusCode, response::Response, routing::{get, post}, Router};
+use axum::{body::{Body, Bytes}, extract::{ws::{Message, WebSocket}, FromRequest, Host, Path, RawForm, Request, State, WebSocketUpgrade}, http::{request, StatusCode}, response::Response, routing::{any, get, post}, Router};
 use dashmap::DashMap;
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Notify};
 use uuid7::{uuid7, Uuid};
 
-use crate::commons::{ProtocolMessage, WebsocketMessage, WebsocketProxy};
+use crate::{commons::{ProtocolMessage, WebsocketMessage, WebsocketProxy}, httptools::basic_response};
 
-pub const SERVER_CONTROL_PORT: u16 = 7969;
+pub const SERVER_CONTROL_PORT: u16 = 8001;
+pub const WEB_SERVER_PORT: u16 = 8000;
 
-#[derive(Clone)]
-pub struct KubeRoute {
-
-}
 
 
 #[derive(Clone)]
 pub struct KubeportServer {
     pub listener: Arc<TcpListener>,
-    pub map: DashMap<String, KubeRoute>
+    pub map: DashMap<String, WebsocketProxy>
 }
 
 impl KubeportServer {
@@ -32,12 +29,7 @@ impl KubeportServer {
         let listener = Arc::new(TcpListener::bind(&addr).await?);
 
 
-        tokio::spawn({
-            let listener = Arc::clone(&listener);
-            async move {
-                run_server_listener(listener).await;
-            }
-        });
+       
 
         Ok(KubeportServer {
             listener,
@@ -45,9 +37,16 @@ impl KubeportServer {
         })
     }
     pub async fn spin() -> Result<()> {
-        
+        let server = Arc::new(KubeportServer::create().await?);
+        tokio::spawn({
+            let server = Arc::clone(&server);
+            let listener = Arc::clone(&server.listener);
+            async move {
+                run_server_listener(server, listener).await;
+            }
+        });
 
-        run_kubeport_server(KubeportServer::create().await?).await;
+        run_kubeport_server(server).await;
         Ok(())
     }
     pub fn has_route(&self, key: &str) -> bool {
@@ -55,36 +54,127 @@ impl KubeportServer {
     }
 }
 
-pub async fn run_server_listener(server: Arc<TcpListener>) {
+use anyhow::{anyhow};
+
+
+
+
+pub async fn handle_raw_request(id: &Uuid, state: Arc<KubeportServer>, mut stream: TcpStream) -> Result<()> {
+
+    // Get the top of the request.
+    let mut buf: &mut [u8] = &mut [0u8; 18_000];
+    let bytes_read = stream.peek(buf).await?;
+    buf = &mut buf[..bytes_read];
+
+    // let pos = buf.index(index)
+
+    println!("SEQUENCE");
+
+    let slice_position = buf.iter().position(|r| *r == 10).ok_or_else(|| anyhow!("Failed to scan the request."))? - 1;
+    let rest_of_response = &buf[slice_position..];
+
+    let mut tip = from_utf8(&buf[..slice_position])?.split(" ");
+
+    println!("Wow: {:?}", tip.nth(1));
+
+
+    
+
+     // Move this into another file.
+     let mut headers = [httparse::EMPTY_HEADER; 64];
+     let mut parsed = httparse::Request::new(&mut headers);
+     parsed.parse(buf)?;
+
+     println!("RAW: {}", from_utf8(buf).unwrap());
+    println!("Request: {:?}", parsed);
+
+     // path
+     let mut path = parsed.path.unwrap();
+     if path.starts_with("/") {
+        path = &path[1..];
+     }
+     if let Some(item) = path.split("/").next() {
+        if !state.has_route(item) {
+            stream.write_all(basic_response(StatusCode::BAD_REQUEST).as_bytes()).await?;
+            return Ok(())
+        }
+        //accept_connection(stream, state.map.get(item).unwrap().value().clone(), id.to_owned()).await?;
+        //state.map.get(item).unwrap().send_main(ProtocolMessage::Message())
+     } else {   
+        stream.write_all(basic_response(StatusCode::BAD_REQUEST).as_bytes()).await?;
+     }
+     
+
+
+     println!("Received a request {:?}", parsed);
+
+    Ok(())
+}
+
+pub async fn run_server_listener(state: Arc<KubeportServer>, server: Arc<TcpListener>) {
     loop {
-        let (stream, addr) = server.accept().await.unwrap();
-        println!("Stream connected: {:?}", addr);
+        let stream = server.accept().await.unwrap().0;
+
+        tokio::spawn({
+            let id = uuid7();
+            let state = Arc::clone(&state);
+            
+            //let server = Arc::clone(&server);
+            async move {
+
+                
+
+                handle_raw_request(&id, state, stream).await.unwrap();
+
+                //accept_connection(stream, state.map.get("name").unwrap().clone(), id).await.unwrap();
+                
+
+                //let mut buffer = [0u8; 4096];
+                //let rd = stream.read(&mut buffer).await.unwrap();
+                //handle_raw_request(&id, state, stream, &buffer[..rd]).boxed().await.unwrap();
+
+               
+            }
+        });
     }
 }
 
-pub async fn run_kubeport_server(server: KubeportServer) {
+pub async fn run_kubeport_server(server: Arc<KubeportServer>) {
 
     let app = Router::new()
-        .route("/forward/:service", get(handle_ws))
+       // .route("/*path", any(handle_request))
+        .route("/forward/:service", get(websocket_handler))
         .route("/available/:name", post(check_availability))
        // .route("/forward/:service", post(connect_to_route))
         .with_state(server);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8000").await.unwrap();
+    let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], WEB_SERVER_PORT))).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 
 
 }
 
-async fn check_availability(State(state): State<KubeportServer>, Path(name): Path<String>) -> (StatusCode, String)  {
+// async fn handle_request(body: RawForm) -> String {
+//     println!("REQUEST BODY: {:?} {:?}", 3, 3);
+
+//     let request: &str = Request::builder().into();
+//     println!("REQUEST {:?}", request);
+
+//     "Hello".to_string()
+
+// }
+
+async fn check_availability(State(state): State<Arc<KubeportServer>>, Path(name): Path<String>) -> (StatusCode, String)  {
 
 
     (StatusCode::ACCEPTED, (!state.has_route(&name)).to_string())
 }
 
-async fn handle_ws(ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(handle_websocket_connection)
+
+async fn websocket_handler(Path(pathname): Path<String>, ws: WebSocketUpgrade, State(state): State<Arc<KubeportServer>>) -> Response {
+    ws.on_upgrade(|socket| handle_websocket_connection(pathname, socket, state))
 }
+
 
 
 
@@ -94,47 +184,50 @@ async fn handle_ws(ws: WebSocketUpgrade) -> Response {
 //     Ok(())
 // }
 
-async fn handle_websocket_connection(ws: WebSocket) {
+async fn handle_websocket_connection(stream: String, ws: WebSocket, state: Arc<KubeportServer>) {
 
     
-    
+        // println!("Stream: {:?}", stream);
 
     
-    let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 54314))).await.unwrap();
-    println!("Created a listener on {:?}", listener.local_addr());
+    // let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 54314))).await.unwrap();
+    // println!("Created a listener on {:?}", listener.local_addr());
 
 
-
-    let proxy = WebsocketProxy::create(ws);
+    println!("Started a reverse proxy for stream {}", stream);
+    state.map.insert(stream.clone(), WebsocketProxy::create(ws));
+    // let proxy = state.map.get(&stream).unwrap().value().clone();
 
    
-    println!("Proxy");
+    // println!("Proxy");
    
 
-    loop {
-        let t_stream = listener.accept().await.unwrap().0;
-        let id = uuid7();
-        println!("Found a stream");
-        println!("Got a websocket request. Opening under ID {}.", id);
-        proxy.send_main(ProtocolMessage::Open(id.clone())).await.unwrap();
-        //send_protocol_message(&mut ws, ProtocolMessage::Open(id)).await.unwrap();
-        tokio::spawn({
+    // loop {
+    //     let t_stream = listener.accept().await.unwrap().0;
+    //     let id = uuid7();
+    //     println!("Found a stream");
+    //     println!("Got a websocket request. Opening under ID {}.", id);
+    //     proxy.send_main(ProtocolMessage::Open(id.clone())).await.unwrap();
+    //     //send_protocol_message(&mut ws, ProtocolMessage::Open(id)).await.unwrap();
+    //     tokio::spawn({
 
-            let proxy = proxy.clone();
-            let id = id.clone();
-            async move {
-                accept_connection(t_stream, proxy, id).await.unwrap();
-                println!("CONNECTION CLEANED");
-            }
-        });
+    //         let proxy = proxy.clone();
+    //         let id = id.clone();
+    //         async move {
+    //             accept_connection(t_stream, proxy, id).await.unwrap();
+    //             println!("CONNECTION CLEANED");
+    //         }
+    //     });
     
-    }
+    // }
 
 }
 
-async fn accept_connection(t_stream: TcpStream, proxy: WebsocketProxy, id: Uuid) -> Result<()> {
+async fn accept_connection(t_stream: TcpStream, proxy: WebsocketProxy, id: Uuid, initial: &mut [u8]) -> Result<()> {
     
     println!("GOT A CONNECTION");
+
+    proxy.send_main(ProtocolMessage::Open(id.clone())).await?;
 
     let (mut t_read, mut t_write) = t_stream.into_split();
 
