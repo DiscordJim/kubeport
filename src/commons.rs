@@ -155,10 +155,18 @@ impl Clone for WebsocketProxy {
 }
 
 
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub enum ControlCode {
+    Neutral,
+    Open,
+    Close
+}
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WebsocketMessage {
     pub id: Uuid,
+    pub code: ControlCode,
     pub data: Vec<u8>
 }
 
@@ -167,8 +175,9 @@ pub struct WebsocketMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ProtocolMessage {
-    Open(Uuid),
-    Message(WebsocketMessage)
+    //Open(Uuid),
+    Message(WebsocketMessage),
+    // Close(Uuid)
 
 }
 
