@@ -5,7 +5,6 @@ use std::{net::SocketAddr, sync::Arc};
 use anyhow::Result;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
-use serde::Serialize;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::OwnedWriteHalf, TcpStream}, sync::Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use uuid7::Uuid;
@@ -28,7 +27,7 @@ pub async fn run_client() -> Result<()> {
     
     let ws_write = Arc::new(Mutex::new(ws_write));
 
-    let connection_map: DashMap<Uuid, OwnedWriteHalf> = DashMap::new();
+    let connection_map = Arc::new(DashMap::<Uuid, OwnedWriteHalf>::new());
 
     
 
@@ -36,7 +35,11 @@ pub async fn run_client() -> Result<()> {
         if let Some(Ok(Message::Binary(msg))) = ws_read.next().await {
             match bincode::deserialize::<ProtocolMessage>(&msg)? {
                 ProtocolMessage::Message(msg) => {
+                    if !connection_map.contains_key(&msg.id) {
+                        continue;
+                    }
                     if let Some(mut res) = connection_map.get_mut(&msg.id) {
+                        println!("| -> Write {}", msg.data.len());
                         res.write_all(&msg.data).await?;
                     }
                 },
@@ -44,27 +47,34 @@ pub async fn run_client() -> Result<()> {
                     println!("Opening a new channel under {}.", msg);
                     if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127,0,0,1], service_port))).await {
                         // let guarded = Arc::new(stream);
+                        println!("Connected to service succesfully.");
     
                         let (mut read, write) = stream.into_split();
     
                         tokio::spawn({
                             let id = msg.clone();
                             let ws_write = Arc::clone(&ws_write);
-                            
+                            let connection_map = Arc::clone(&connection_map);
                             async move {
-                            loop {
-                                let mut buffer = [0u8; 16409];
-                                if let Ok(bytes_read) = read.read(&mut buffer).await {
-                                    if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
-                                        id,
-                                        data: buffer[..bytes_read].to_vec()
-                                    }).serialize().await {
+                                loop {
+                                    let mut buffer = [0u8; 16409];
+                                    println!("Reading...");
+                                    if let Ok(bytes_read) = read.read(&mut buffer).await {
+                                        println!("Got paccket.. {}", bytes_read);
+                                        if bytes_read == 0 {
+                                            connection_map.remove(&id);
+                                            break;
+                                        }
+                                        if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
+                                            id,
+                                            data: buffer[..bytes_read].to_vec()
+                                        }).serialize().await {
+                                            println!("| -> Writing {}", pbytes.len());
+                                            ws_write.lock().await.send(Message::Binary(pbytes)).await.unwrap();
+                                        }
                                         
-                                        ws_write.lock().await.send(Message::Binary(pbytes)).await.unwrap();
                                     }
-                                    
                                 }
-                            }
                         }});
     
     
@@ -75,9 +85,6 @@ pub async fn run_client() -> Result<()> {
         }
     
     }
-    
-    println!("done");
-
 
     // println!("Connected to the websocket.");
 
@@ -106,7 +113,5 @@ pub async fn run_client() -> Result<()> {
     //     }
     // }
 
-
-    Ok(())
     
 }
