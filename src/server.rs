@@ -121,20 +121,23 @@ async fn handle_request(State(state): State<Arc<KubeportServer>>, req: Request) 
     })).boxed().await.unwrap();
 
 
-    let chan = bro.get_channel(&id).await;
+    //let chan = bro.get_channel(&id).await;
+    //let chan = bro.get_distributor();
     let mut resp = Vec::new();
     loop {
-        if let Ok(msg) = chan.recv().await {
+        let msg = bro.get_distributor().subscribe(&id).await.unwrap();
+        //if let Ok(msg) = chan.recv().await {
             if msg.code == ControlCode::Close {
                 println!("SAW THE CONTROL CODE...");
                 break;
             }
             println!("RECEIVING PACKET...");
             resp.extend_from_slice(&msg.data);
-        } else {
-            // TODO: Throw error.
-            break
-        }
+        // } else {
+        //     // TODO: Throw error.
+        //     println!("Failed.");
+        //     break
+        // }
     }
     println!("OUT OF LOOPPP");
     
@@ -159,6 +162,8 @@ async fn handle_request(State(state): State<Arc<KubeportServer>>, req: Request) 
 
 
  
+    println!("BRO: {:?}", from_utf8(&resp).unwrap().to_string());
+
 
 
     let mut body: &[u8] = &[];
@@ -169,7 +174,6 @@ async fn handle_request(State(state): State<Arc<KubeportServer>>, req: Request) 
         }
     }
 
-    // println!("BRO: {:?}", from_utf8(body).unwrap().to_string());
 
     // TODO: Missing parts of request.
     

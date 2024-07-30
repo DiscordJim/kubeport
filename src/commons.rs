@@ -16,7 +16,7 @@ use tracing_subscriber::{fmt::Layer, layer::SubscriberExt, util::SubscriberInitE
 use uuid7::Uuid;
 use anyhow::anyhow;
 
-use crate::sync::coordinator::AsyncCoordinator;
+use crate::sync::{coordinator::AsyncCoordinator, distributed::DistributedSPMC};
 
 pub const CHANNEL_SIZE: usize = 10;
 
@@ -45,38 +45,16 @@ pub fn configure_system_logger(path: impl AsRef<Path>) {
 
 pub struct SimpleChannel<T>{
     channel: (Sender<T>, Receiver<T>),
-    pub shutdown: Shutdown
+    //pub shutdown: Arc<AsyncCoordinator>
 }
 
-pub struct Shutdown(Arc<Notify>, Arc<AtomicBool>);
 
-impl Clone for Shutdown {
-    fn clone(&self) -> Self {
-        Self(Arc::clone(&self.0), Arc::clone(&self.1))
-    }
-}
-
-impl Shutdown {
-    pub fn new() -> Self {
-        Self(Arc::new(Notify::new()), Arc::new(AtomicBool::new(false)))
-    }
-    pub fn shutdown(&self) {
-        self.1.store(true, Ordering::Release);
-        self.0.notify_waiters();
-    }
-    pub async fn wait_shutdown(&self) {
-        self.0.notified().await;
-    }
-    pub fn is_shutdown(&self) -> bool {
-        self.1.load(Ordering::Acquire)
-    }
-}
 
 impl<T> Clone for SimpleChannel<T> {
     fn clone(&self) -> Self {
         Self {
             channel: self.channel.clone(),
-            shutdown: self.shutdown.clone()
+            //shutdown: self.shutdown.clone()
         }
     }
 }
@@ -85,34 +63,34 @@ impl<T> SimpleChannel<T> {
         let channel =flume::bounded(cap);
         Self {
             channel,
-            shutdown: Shutdown::new()
+            //shutdown: Arc::new(AsyncCoordinator::new())
         }
     }
     pub async fn send(&self, msg: T) -> Result<()> {
-        if self.shutdown.is_shutdown() {
-            Err(anyhow!("Channel is already shutdown."))?
-        }
+        // if self.shutdown.is_shutdown() {
+        //     Err(anyhow!("Channel is already shutdown."))?
+        // }
         Ok(tokio::select! {
             m = self.channel.0.send_async(msg) => {
                 println!("We did send message");
                 m
             },
-            _ = self.shutdown.wait_shutdown() => {
-                Err(anyhow!("Channel shutdown."))?
-            }
+            // _ = self.shutdown.wait_on_change() => {
+            //     Err(anyhow!("Channel shutdown."))?
+            // }
         }.map_err(|e| anyhow!("Send failure: {e}"))?)
         
        // self.channel.0.send_async(msg).await
     }
     pub async fn recv(&self) -> Result<T> {
-        if self.shutdown.is_shutdown() {
-            Err(anyhow!("Channel is already shutdown."))?
-        }
+        // if self.shutdown.is_shutdown() {
+        //     Err(anyhow!("Channel is already shutdown."))?
+        // }
         Ok(tokio::select! {
             m = self.channel.1.recv_async() => m,
-            _ = self.shutdown.wait_shutdown() => {
-                Err(anyhow!("Channel shutdown."))?
-            }
+            // _ = self.shutdown.wait_on_change() => {
+            //     Err(anyhow!("Channel shutdown."))?
+            // }
         }.map_err(|e| anyhow!("Send failure: {e}"))?)
         
         // self.channel.1.recv_async().await
@@ -143,10 +121,10 @@ impl<U, T> ChannelDistributor<U, T>
         }
         Arc::clone(self.cmap.get(&id).unwrap().value())
     }
-    pub fn has_channel(&self, id: &U) -> bool {
+    pub fn has_topic(&self, id: &U) -> bool {
         self.cmap.contains_key(id)
     }
-    pub fn remove_channel(&self, id: &U) {
+    pub fn remove_topic(&self, id: &U) {
         self.cmap.remove(id);
     }
     // pub async fn submit(&self, id: &U, msg: T) -> Result<()> {
@@ -168,7 +146,8 @@ impl<U, T> ChannelDistributor<U, T>
 pub struct WebsocketProxy {
     communicator: SimpleChannel<ProtocolMessage>,
     coordinator: Arc<AsyncCoordinator>,
-    distributor: Arc<ChannelDistributor<Uuid, WebsocketMessage>>
+    //distributor: Arc<ChannelDistributor<Uuid, WebsocketMessage>>
+    distributor: Arc<DistributedSPMC<Uuid, WebsocketMessage>>
     //recv: Receiver<WebsocketMessage>
 }
 
@@ -223,7 +202,8 @@ impl WebsocketProxy {
         let coordinator = Arc::new(AsyncCoordinator::new());
 
 
-        let distributor = Arc::new(ChannelDistributor::new(CHANNEL_SIZE));
+        //let distributor = Arc::new(ChannelDistributor::new(CHANNEL_SIZE));
+        let distributor = Arc::new(DistributedSPMC::new(CHANNEL_SIZE));
 
         let (mut ws_sender, mut ws_receiver) = ws.split();
 
@@ -248,14 +228,15 @@ impl WebsocketProxy {
                                 if let Ok(ProtocolMessage::Message(msg)) = bincode::deserialize(&content) {
                                     let id = msg.id.clone();
                                     println!("Getting message.");
-                                    if !distributor.has_channel(&id) {
+                                    if !distributor.has_topic(&id) {
                                         continue
                                     }
                                     println!("Submitting to distributor... {} {}", msg.id, msg.data.len());
                                 
-                                    if let Err(e) = distributor.get_channel(&id).await.send(msg).await {
-                                        println!("Shutting down distributor..");
-                                        distributor.remove_channel(&id);
+                                    //if let Err(e) = distributor.get_channel(&id).await.send(msg).await {
+                                    if let Err(e) = distributor.publish(&id, msg).await { 
+                                        error!("Failed to publish to distributor with error: {e}. Doing best effort to remove the topic.");
+                                        let _ = distributor.remove_topic(&id);
                                     }
                                     // match distributor.get_channel(&msg.id).await.recv().await {
                                     //     Ok(v) => 
@@ -338,8 +319,11 @@ impl WebsocketProxy {
         self.communicator.send(msg).await?;
         Ok(())
     }
-    pub async fn get_channel(&self, id: &Uuid) -> Arc<SimpleChannel<WebsocketMessage>> {
-        self.distributor.get_channel(id).await
+    // pub async fn get_channel(&self, id: &Uuid) -> Arc<SimpleChannel<WebsocketMessage>> {
+    //     self.distributor.get_channel(id).await
+    // }
+    pub fn get_distributor(&self) -> Arc<DistributedSPMC<Uuid, WebsocketMessage>> {
+        Arc::clone(&self.distributor)
     }
     pub fn get_coordinator(&self) -> Arc<AsyncCoordinator> {
         Arc::clone(&self.coordinator)

@@ -17,6 +17,9 @@ impl AsyncCoordinator {
     pub fn shutdown(&self) {
         self.change_state(true);
     }
+    pub fn is_shutdown(&self) -> bool {
+        self.decision.load(Ordering::Acquire)
+    }
     pub fn change_state(&self, new_state: bool) {
         let _ = self.decision.compare_exchange(!new_state, new_state, Ordering::Release, Ordering::Relaxed);
         self.notifier.notify_waiters();
@@ -26,6 +29,6 @@ impl AsyncCoordinator {
     }
     pub async fn on_state_change(&self) -> bool {
         self.wait_on_change().await;
-        self.decision.load(Ordering::Acquire)
+        self.is_shutdown()
     }
 }
