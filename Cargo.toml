@@ -19,3 +19,8 @@ serde = { version = "1.0.204", features = ["derive"] }
 tokio = { version = "1.39.1", features = ["full", "io-std", "io-util", "macros", "rt", "rt-multi-thread"] }
 tokio-tungstenite = "0.23.1"
 uuid7 = { version = "1.0.0", features = ["serde"] }
+
+
+tracing = "0.1.40"
+tracing-subscriber = { version="0.3.18", features= ["chrono"] }
+tracing-appender = "0.2.3"

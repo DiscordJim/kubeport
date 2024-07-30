@@ -1,7 +1,7 @@
 
 
 
-use std::{hash::Hash, sync::{atomic::{AtomicBool, Ordering}, Arc}};
+use std::{hash::Hash, path::Path, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 
 use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket};
@@ -10,11 +10,35 @@ use flume::{Receiver, RecvError, SendError, Sender};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
+use tracing::Level;
+use tracing_appender::rolling::daily;
+use tracing_subscriber::{fmt::Layer, layer::SubscriberExt, util::SubscriberInitExt, FmtSubscriber};
 use uuid7::Uuid;
 use anyhow::anyhow;
 
 pub const CHANNEL_SIZE: usize = 10;
 
+
+pub fn configure_system_logger(path: impl AsRef<Path>) {
+    let file_appender =
+        daily(path.as_ref().join("logs"), "prefix.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+    let format = tracing_subscriber::fmt::format().compact();
+
+    FmtSubscriber::builder()
+        .event_format(format)
+        .with_max_level(Level::INFO)
+        .finish()
+        .with(
+            Layer::default()
+                .with_writer(non_blocking)
+                .with_ansi(false),
+        )
+        .init();
+
+    Box::leak(Box::new(guard));
+}
 
 
 pub struct SimpleChannel<T>{

@@ -1,25 +1,75 @@
 
 
-use std::{net::SocketAddr, process::exit, ptr::read, str::from_utf8, sync::Arc};
+use std::{net::SocketAddr, process::exit, ptr::read, str::from_utf8, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use dashmap::DashMap;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{stream::FusedStream, FutureExt, SinkExt, StreamExt};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::OwnedWriteHalf, TcpStream}, sync::Mutex};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tracing::{error, info};
 use uuid7::Uuid;
 
-use crate::commons::{ControlCode, ProtocolMessage, WebsocketMessage};
+use crate::commons::{configure_system_logger, ControlCode, ProtocolMessage, WebsocketMessage};
 
 
 
 
+
+const SERVICE_NAME: &str = "name";
+const LOCAL_SERVICE_PORT: u16 = 4032;
+
+pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, bytes: Vec<u8>) -> Result<()> {
+
+    match bincode::deserialize::<ProtocolMessage>(&bytes)? {
+        ProtocolMessage::Message(msg) => {
+
+            if let Ok(mut stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
+                println!("Connecting to service.");
+
+
+                stream.write_all(&msg.data).await.unwrap();
+                println!("SENT BYTES.");
+
+                let buf: &mut [u8] = &mut [0u8; 8096];
+                while let Ok(data) = stream.read(buf).await {
+                    if data == 0 {
+                        println!("Done transmission.");
+
+                        let protocol = ProtocolMessage::Message(WebsocketMessage {
+                            id: msg.id.clone(),
+                            code: ControlCode::Close,
+                            data: Vec::new()
+                        });
+
+                        ws_stream.send(Message::Binary(protocol.serialize().await.unwrap())).await.unwrap();
+                        println!("send");
+                        break;
+                    }
+                    if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
+                        id: msg.id.clone(),
+                        code: ControlCode::Neutral,
+                        data: buf[..data].to_vec()
+                    }).serialize().await {
+                        println!("| -> Push {} bytes", pbytes.len());
+                        println!("| MESSAGE: {:?}", from_utf8(&buf[..data]));
+                        ws_stream.send(Message::Binary(pbytes)).await.unwrap();
+                    }
+                }
+                println!("Bro");
+            }
+        }
+    }
+            
+    Ok(())
+}
 
 
 
 pub async fn run_client() -> Result<()> {
 
-    let service_port: u16 = 4032;
+
+    configure_system_logger("logs");
 
 
     // if let Ok(mut stream) = TcpStream::connect("localhost:4032").await {
@@ -54,54 +104,39 @@ pub async fn run_client() -> Result<()> {
     // exit(1);
 
 
-    let ws_stream = connect_async("ws://localhost:8000/forward/name").await?.0;
-    let (ws_write, mut ws_read) = ws_stream.split();
-    
-    let ws_write = Arc::new(Mutex::new(ws_write));
+    info!("Starting client service...");
+    let ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>> = &mut connect_async(format!("ws://localhost:8000/forward/{SERVICE_NAME}")).await?.0;
+    info!("Forwarding 127.0.0.1:{LOCAL_SERVICE_PORT} -> remote::/[{SERVICE_NAME}]");
 
-    let connection_map = Arc::new(DashMap::<Uuid, OwnedWriteHalf>::new());
+    //let (ws_write, mut ws_read) = ws_stream.split();
+    
+    //let ws_write = Arc::new(Mutex::new(ws_write));
+
+   // let connection_map = Arc::new(DashMap::<Uuid, OwnedWriteHalf>::new());
 
     
 
     loop {
-        if let Some(Ok(Message::Binary(msg))) = ws_read.next().await {
-            match bincode::deserialize::<ProtocolMessage>(&msg)? {
-                ProtocolMessage::Message(msg) => {
+//ws_stream.is_terminated()
+        
+        match ws_stream.next().await {
+            Some(Ok(v)) => {
+                if let Message::Binary(bytes) = v {
+                    handle_message(ws_stream, bytes).await?;
+                }
+               
+            },
+            Some(Err(e)) => {
+                error!("Failed to receive a message from the WebSocket with error: {e}");
+            },
+            None => {
+                error!("Received a null packet from the remote server. This means the connection has closed.");
+                break;
+            }
+        }
 
-                    if let Ok(mut stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], service_port))).await {
-                        println!("Connecting to service.");
 
-
-                        stream.write_all(&msg.data).await.unwrap();
-                        println!("SENT BYTES.");
-
-                        let buf: &mut [u8] = &mut [0u8; 8096];
-                        while let Ok(data) = stream.read(buf).await {
-                            if data == 0 {
-                                println!("Done transmission.");
-
-                                let protocol = ProtocolMessage::Message(WebsocketMessage {
-                                    id: msg.id.clone(),
-                                    code: ControlCode::Close,
-                                    data: Vec::new()
-                                });
-
-                                ws_write.lock().await.send(Message::Binary(protocol.serialize().await.unwrap())).await.unwrap();
-                                println!("send");
-                                break;
-                            }
-                            if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
-                                id: msg.id.clone(),
-                                code: ControlCode::Neutral,
-                                data: buf[..data].to_vec()
-                            }).serialize().await {
-                                println!("| -> Push {} bytes", pbytes.len());
-                                println!("| MESSAGE: {:?}", from_utf8(&buf[..data]));
-                                ws_write.lock().await.send(Message::Binary(pbytes)).await.unwrap();
-                            }
-                        }
-                        println!("Bro");
-                    }
+        
 
                     // if !connection_map.contains_key(&msg.id) {
                     //     continue;
@@ -111,50 +146,51 @@ pub async fn run_client() -> Result<()> {
                     //     println!("| MESSAGE: {:?}", from_utf8(&msg.data));
                     //     res.write_all(&msg.data).await?;
                     // }
-                },
-                _ => {}
-                // ProtocolMessage::Open(msg) => {
-                //     // println!("Opening a new channel under {}.", msg);
-                //     // if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127,0,0,1], service_port))).await {
-                //     //     // let guarded = Arc::new(stream);
-                //     //     println!("Connected to service succesfully.");
+                // }
+        //         // ProtocolMessage::Open(msg) => {
+        //         //     // println!("Opening a new channel under {}.", msg);
+        //         //     // if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127,0,0,1], service_port))).await {
+        //         //     //     // let guarded = Arc::new(stream);
+        //         //     //     println!("Connected to service succesfully.");
     
-                //     //     let (mut read, write) = stream.into_split();
-                //     //     connection_map.insert(msg, write);
+        //         //     //     let (mut read, write) = stream.into_split();
+        //         //     //     connection_map.insert(msg, write);
 
 
-                //     //     tokio::spawn({
-                //     //         let id = msg.clone();
-                //     //         let ws_write = Arc::clone(&ws_write);
-                //     //         let connection_map = Arc::clone(&connection_map);
-                //     //         async move {
-                //     //             loop {
-                //     //                 let mut buffer = [0u8; 16409];
-                //     //                 println!("Reading...");
-                //     //                 if let Ok(bytes_read) = read.read(&mut buffer).await {
-                //     //                     println!("Got paccket.. {}", bytes_read);
-                //     //                     if bytes_read == 0 {
-                //     //                         connection_map.remove(&id);
-                //     //                         break;
-                //     //                     }
-                //     //                     if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
-                //     //                         id,
-                //     //                         data: buffer[..bytes_read].to_vec()
-                //     //                     }).serialize().await {
-                //     //                         println!("| -> Push {} bytes", pbytes.len());
-                //     //                         ws_write.lock().await.send(Message::Binary(pbytes)).await.unwrap();
-                //     //                     }
+        //         //     //     tokio::spawn({
+        //         //     //         let id = msg.clone();
+        //         //     //         let ws_write = Arc::clone(&ws_write);
+        //         //     //         let connection_map = Arc::clone(&connection_map);
+        //         //     //         async move {
+        //         //     //             loop {
+        //         //     //                 let mut buffer = [0u8; 16409];
+        //         //     //                 println!("Reading...");
+        //         //     //                 if let Ok(bytes_read) = read.read(&mut buffer).await {
+        //         //     //                     println!("Got paccket.. {}", bytes_read);
+        //         //     //                     if bytes_read == 0 {
+        //         //     //                         connection_map.remove(&id);
+        //         //     //                         break;
+        //         //     //                     }
+        //         //     //                     if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
+        //         //     //                         id,
+        //         //     //                         data: buffer[..bytes_read].to_vec()
+        //         //     //                     }).serialize().await {
+        //         //     //                         println!("| -> Push {} bytes", pbytes.len());
+        //         //     //                         ws_write.lock().await.send(Message::Binary(pbytes)).await.unwrap();
+        //         //     //                     }
                                         
-                //     //                 }
-                //     //             }
-                //     //     }});
+        //         //     //                 }
+        //         //     //             }
+        //         //     //     }});
     
     
                        
-                //     }
-                }
-            }
+        //         //     }
+        //         }
+        //     }
         }
+
+        Ok(())
     
 }
 
