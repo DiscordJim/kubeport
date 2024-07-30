@@ -151,8 +151,6 @@ async fn handle_request(State(state): State<Arc<KubeportServer>>, req: Request) 
     // println!("BRO {:#?}", resp);
 
 
-    println!("QUE TAL {}",  from_utf8(&resp).unwrap().to_string());
-
 
     
     let mut headers = [httparse::EMPTY_HEADER; 64];
@@ -160,9 +158,7 @@ async fn handle_request(State(state): State<Arc<KubeportServer>>, req: Request) 
     response.parse(&resp).unwrap();
 
 
-    
-    println!("PARSES: {:?}", response);
-
+ 
 
 
     let mut body: &[u8] = &[];

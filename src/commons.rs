@@ -10,11 +10,13 @@ use flume::{Receiver, RecvError, SendError, Sender};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
-use tracing::Level;
+use tracing::{error, info, Level};
 use tracing_appender::rolling::daily;
 use tracing_subscriber::{fmt::Layer, layer::SubscriberExt, util::SubscriberInitExt, FmtSubscriber};
 use uuid7::Uuid;
 use anyhow::anyhow;
+
+use crate::sync::coordinator::AsyncCoordinator;
 
 pub const CHANNEL_SIZE: usize = 10;
 
@@ -216,45 +218,109 @@ impl WebsocketProxy {
         let wschannel = SimpleChannel::<ProtocolMessage>::new(CHANNEL_SIZE);
         // let (send, recv) = flume::bounded::<ProtocolMessage>(300);
 
+        let coordinator = Arc::new(AsyncCoordinator::new());
+
 
         let distributor = Arc::new(ChannelDistributor::new(CHANNEL_SIZE));
 
         let (mut ws_sender, mut ws_receiver) = ws.split();
 
         tokio::spawn({
+            let coordinator = Arc::clone(&coordinator);
             //let send = send.clone();
+            println!("Creating listener.");
             let distributor = Arc::clone(&distributor);
             async move {
-                while let Some(Ok(Message::Binary(bin))) = ws_receiver.next().await {
-                    if let Ok(ProtocolMessage::Message(msg)) = bincode::deserialize(&bin) {
-                        let id = msg.id.clone();
-                        if !distributor.has_channel(&id) {
-                            continue
+
+                loop {
+                    match tokio::select! {
+                        p = ws_receiver.next() => p,
+                        _ = coordinator.wait_on_change() => {
+                            //error!("Detected a state change.");
+                            break
                         }
-                        println!("Submitting to distributor... {} {}", msg.id, msg.data.len());
-                       
-                        if let Err(e) = distributor.get_channel(&id).await.send(msg).await {
-                            println!("Shutting down distributor..");
-                            distributor.remove_channel(&id);
+                    } {
+                        Some(Ok(message)) => {
+                            if let Message::Binary(content) = message {
+                                println!("Getting raw message");
+                                if let Ok(ProtocolMessage::Message(msg)) = bincode::deserialize(&content) {
+                                    let id = msg.id.clone();
+                                    println!("Getting message.");
+                                    if !distributor.has_channel(&id) {
+                                        continue
+                                    }
+                                    println!("Submitting to distributor... {} {}", msg.id, msg.data.len());
+                                
+                                    if let Err(e) = distributor.get_channel(&id).await.send(msg).await {
+                                        println!("Shutting down distributor..");
+                                        distributor.remove_channel(&id);
+                                    }
+                                    // match distributor.get_channel(&msg.id).await.recv().await {
+                                    //     Ok(v) => 
+                                    // }
+                                    // distributor.submit(&msg.id.clone(), msg).await.unwrap();
+                                } 
+                            }
+    
+                        },
+                        Some(Err(e)) => {
+                            error!("Write loop received an error: {e}. Shutting down.");
+                            coordinator.shutdown();
+                            break
+                        },
+                        None => {
+                            error!("Write loop received none as a message. Shutting down.");
+                            coordinator.shutdown();
+                            break
                         }
-                        // match distributor.get_channel(&msg.id).await.recv().await {
-                        //     Ok(v) => 
-                        // }
-                        // distributor.submit(&msg.id.clone(), msg).await.unwrap();
-                    } 
+                    }
                 }
+
+                
+
+
+                // while let Message::Binary(bin) = ws_receiver.next().await.unwrap().unwrap() {
+                    
+                // }
+                info!("Write loop succesfully shutdown.");
             }
+            
         });
 
         tokio::spawn({
             // let recv = recv.clone();
+            let coordinator = Arc::clone(&coordinator);
             let wschannel = wschannel.clone();
             async move {
-                while let Ok(msg) = wschannel.recv().await {
-                    println!("Got a message");
-                    ws_sender.send(Message::Binary(msg.serialize().await.unwrap())).await.unwrap();
+                loop {
+
+                    //println!("Waiting");
+                    match tokio::select! {
+                        p = wschannel.recv() => p,
+                        _ = coordinator.wait_on_change() => {
+                            //error!("Detected a state change.");
+                            break
+                        }
+                    } {
+                        Ok(protocol_message) => {
+                            ws_sender.send(Message::Binary(protocol_message.serialize().await.unwrap())).await.unwrap();
+                        },
+                        Err(e) => {
+                            error!("The receiving channel encountered an error: {e}");
+                        }
+                    }
                 }
+
+                info!("Read loop succesfully shutdown.");
+                
+
+                // while let Ok(msg) = wschannel.recv().await {
+                //     println!("Got a message");
+                //     ws_sender.send(Message::Binary(msg.serialize().await.unwrap())).await.unwrap();
+                // }
+                // info!("Shut down stream.");
             }
+        
         });
 
 
@@ -265,10 +331,6 @@ impl WebsocketProxy {
             distributor
         }
     }
-
-    // pub async fn recv(&self, id: &Uuid) -> Result<WebsocketMessage> {
-    //     Ok(self.distributor.recv(id).await?)
-    // }
     pub async fn send_main(&self, msg: ProtocolMessage) -> Result<()> {
         self.communicator.send(msg).await?;
         Ok(())
@@ -276,15 +338,6 @@ impl WebsocketProxy {
     pub async fn get_channel(&self, id: &Uuid) -> Arc<SimpleChannel<WebsocketMessage>> {
         self.distributor.get_channel(id).await
     }
-    // pub async fn send(&self, id: &Uuid, data: Vec<u8>) -> Result<()> {
-    //     // println!("|\t-> Data: {}", data.len());
-    //     self.communicator.send(ProtocolMessage::Message(WebsocketMessage {
-    //         id: id.clone(),
-    //         data
-    //     })).await?;
-
-    //     Ok(())
-    // }
 }
 
 

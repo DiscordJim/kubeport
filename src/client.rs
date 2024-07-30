@@ -1,14 +1,12 @@
 
 
-use std::{net::SocketAddr, process::exit, ptr::read, str::from_utf8, sync::Arc, time::Duration};
+use std::{net::SocketAddr, str::from_utf8};
 
 use anyhow::Result;
-use dashmap::DashMap;
-use futures_util::{stream::FusedStream, FutureExt, SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::OwnedWriteHalf, TcpStream}, sync::Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{error, info};
-use uuid7::Uuid;
 
 use crate::commons::{configure_system_logger, ControlCode, ProtocolMessage, WebsocketMessage};
 
