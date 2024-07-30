@@ -167,6 +167,7 @@ impl<U, T> ChannelDistributor<U, T>
 
 pub struct WebsocketProxy {
     communicator: SimpleChannel<ProtocolMessage>,
+    coordinator: Arc<AsyncCoordinator>,
     distributor: Arc<ChannelDistributor<Uuid, WebsocketMessage>>
     //recv: Receiver<WebsocketMessage>
 }
@@ -174,6 +175,7 @@ pub struct WebsocketProxy {
 impl Clone for WebsocketProxy {
     fn clone(&self) -> Self {
         Self {
+            coordinator: Arc::clone(&self.coordinator),
             communicator: self.communicator.clone(),
             distributor: Arc::clone(&self.distributor)
         }
@@ -328,6 +330,7 @@ impl WebsocketProxy {
 
         Self {
             communicator: wschannel,
+            coordinator,
             distributor
         }
     }
@@ -337,6 +340,9 @@ impl WebsocketProxy {
     }
     pub async fn get_channel(&self, id: &Uuid) -> Arc<SimpleChannel<WebsocketMessage>> {
         self.distributor.get_channel(id).await
+    }
+    pub fn get_coordinator(&self) -> Arc<AsyncCoordinator> {
+        Arc::clone(&self.coordinator)
     }
 }
 

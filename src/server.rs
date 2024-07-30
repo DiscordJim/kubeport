@@ -7,7 +7,7 @@ use futures_util::{FutureExt, SinkExt, StreamExt};
 use httparse::EMPTY_HEADER;
 use hyper::header::HOST;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Notify};
-use tracing::info;
+use tracing::{error, info};
 use uuid7::{uuid7, Uuid};
 
 use crate::{commons::{configure_system_logger, ControlCode, ProtocolMessage, WebsocketMessage, WebsocketProxy}, httptools::basic_response};
@@ -203,5 +203,14 @@ async fn handle_websocket_connection(stream: String, ws: WebSocket, state: Arc<K
     info!("Starting a reverse proxy for stream [{}]...", stream);
     state.map.insert(stream.clone(), WebsocketProxy::create(ws));
     info!("Started a reverse proxy for stream [{}]...", stream);
+
+    state.map.get(&stream).unwrap().get_coordinator().wait_on_change().await;
+    info!("Detected shutdown for stream [{}]...", stream);
+    state.map.remove(&stream);
+    info!("Cleaned up stream [{}]", stream);
+
+
+
+
 }
 
