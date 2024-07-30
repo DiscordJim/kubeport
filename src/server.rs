@@ -19,7 +19,7 @@ pub const WEB_SERVER_PORT: u16 = 8000;
 
 #[derive(Clone)]
 pub struct KubeportServer {
-    pub listener: Arc<TcpListener>,
+    //pub listener: Arc<TcpListener>,
     pub map: DashMap<String, WebsocketProxy>
 }
 
@@ -27,26 +27,26 @@ impl KubeportServer {
 
     pub async fn create() -> Result<Self> {
 
-        let addr = SocketAddr::from(([127,0,0,1], SERVER_CONTROL_PORT));
-        let listener = Arc::new(TcpListener::bind(&addr).await?);
+        //let addr = SocketAddr::from(([127,0,0,1], SERVER_CONTROL_PORT));
+        //let listener = Arc::new(TcpListener::bind(&addr).await?);
 
 
        
 
         Ok(KubeportServer {
-            listener,
+            //listener,
             map: DashMap::new()
         })
     }
     pub async fn spin() -> Result<()> {
         let server = Arc::new(KubeportServer::create().await?);
-        tokio::spawn({
-            let server = Arc::clone(&server);
-            let listener = Arc::clone(&server.listener);
-            async move {
-                run_server_listener(server, listener).await;
-            }
-        });
+        // tokio::spawn({
+        //     let server = Arc::clone(&server);
+        //     let listener = Arc::clone(&server.listener);
+        //     async move {
+        //         run_server_listener(server, listener).await;
+        //     }
+        // });
 
         run_kubeport_server(server).await;
         Ok(())
@@ -61,120 +61,120 @@ use anyhow::{anyhow};
 
 
 
-pub async fn handle_raw_request(id: &Uuid, state: Arc<KubeportServer>, mut stream: TcpStream) -> Result<()> {
+// pub async fn handle_raw_request(id: &Uuid, state: Arc<KubeportServer>, mut stream: TcpStream) -> Result<()> {
 
-    // Get the top of the request.
-    let mut buf: &mut [u8] = &mut [0u8; 18_000];
-    let bytes_read = stream.peek(buf).await?;
-    buf = &mut buf[..bytes_read];
+//     // Get the top of the request.
+//     let mut buf: &mut [u8] = &mut [0u8; 18_000];
+//     let bytes_read = stream.peek(buf).await?;
+//     buf = &mut buf[..bytes_read];
 
-    // let pos = buf.index(index)
+//     // let pos = buf.index(index)
 
-    println!("SEQUENCE");
+//     println!("SEQUENCE");
 
-    let slice_position = buf.iter().position(|r| *r == 10).ok_or_else(|| anyhow!("Failed to scan the request."))? - 1;
-    let rest_of_response = &buf[slice_position..];
+//     let slice_position = buf.iter().position(|r| *r == 10).ok_or_else(|| anyhow!("Failed to scan the request."))? - 1;
+//     let rest_of_response = &buf[slice_position..];
 
-    let mut tip: Vec<&str> = from_utf8(&buf[..slice_position])?.split(" ").collect();
+//     let mut tip: Vec<&str> = from_utf8(&buf[..slice_position])?.split(" ").collect();
 
-    let path = tip.get_mut(1).ok_or_else(|| anyhow!("Failed to get path."))?;
+//     let path = tip.get_mut(1).ok_or_else(|| anyhow!("Failed to get path."))?;
     
-    let entrypoint = path[1..].split("/").nth(0).ok_or_else(|| anyhow!("Failed to extract entrypoint."))?;
+//     let entrypoint = path[1..].split("/").nth(0).ok_or_else(|| anyhow!("Failed to extract entrypoint."))?;
 
 
-    // DBEUG: SHOULD BE NEGATIN
-    if state.has_route(entrypoint) {
-        stream.write_all(basic_response(StatusCode::BAD_REQUEST).as_bytes()).await?;
-        return Ok(())
-    } else {
+//     // DBEUG: SHOULD BE NEGATIN
+//     if state.has_route(entrypoint) {
+//         stream.write_all(basic_response(StatusCode::BAD_REQUEST).as_bytes()).await?;
+//         return Ok(())
+//     } else {
 
         
-        let mut new_path = String::from("/");
-        for item in path[1..].split("/").skip(1) {
-            new_path.push_str(item);
-        }
+//         let mut new_path = String::from("/");
+//         for item in path[1..].split("/").skip(1) {
+//             new_path.push_str(item);
+//         }
 
 
-        *tip.get_mut(1).unwrap() = &new_path;
+//         *tip.get_mut(1).unwrap() = &new_path;
 
 
-        let mut new_tip = String::new();
-        for elem in tip {
-            new_tip.push_str(elem);
-            new_tip.push(' ');
-        }
-        let new_tip = new_tip.trim();
+//         let mut new_tip = String::new();
+//         for elem in tip {
+//             new_tip.push_str(elem);
+//             new_tip.push(' ');
+//         }
+//         let new_tip = new_tip.trim();
 
 
-        let transmutated_request = 
+//         let transmutated_request = 
 
-        println!("TIPPER {:?}", new_tip);
+//         println!("TIPPER {:?}", new_tip);
 
-        accept_connection(stream, state.map.get(entrypoint).unwrap().clone(), id.clone(), buf).await?;
-    }
-   // println!("Wow: {:?}", path);
+//         accept_connection(stream, state.map.get(entrypoint).unwrap().clone(), id.clone(), buf).await?;
+//     }
+//    // println!("Wow: {:?}", path);
 
 
     
 
-    //  // Move this into another file.
-    //  let mut headers = [httparse::EMPTY_HEADER; 64];
-    //  let mut parsed = httparse::Request::new(&mut headers);
-    //  parsed.parse(buf)?;
+//     //  // Move this into another file.
+//     //  let mut headers = [httparse::EMPTY_HEADER; 64];
+//     //  let mut parsed = httparse::Request::new(&mut headers);
+//     //  parsed.parse(buf)?;
 
-    //  println!("RAW: {}", from_utf8(buf).unwrap());
-    // println!("Request: {:?}", parsed);
+//     //  println!("RAW: {}", from_utf8(buf).unwrap());
+//     // println!("Request: {:?}", parsed);
 
-    //  // path
-    //  let mut path = parsed.path.unwrap();
-    //  if path.starts_with("/") {
-    //     path = &path[1..];
-    //  }
-    //  if let Some(item) = path.split("/").next() {
-    //     if !state.has_route(item) {
-    //         stream.write_all(basic_response(StatusCode::BAD_REQUEST).as_bytes()).await?;
-    //         return Ok(())
-    //     }
-    //     //accept_connection(stream, state.map.get(item).unwrap().value().clone(), id.to_owned()).await?;
-    //     //state.map.get(item).unwrap().send_main(ProtocolMessage::Message())
-    //  } else {   
-    //     stream.write_all(basic_response(StatusCode::BAD_REQUEST).as_bytes()).await?;
-    //  }
+//     //  // path
+//     //  let mut path = parsed.path.unwrap();
+//     //  if path.starts_with("/") {
+//     //     path = &path[1..];
+//     //  }
+//     //  if let Some(item) = path.split("/").next() {
+//     //     if !state.has_route(item) {
+//     //         stream.write_all(basic_response(StatusCode::BAD_REQUEST).as_bytes()).await?;
+//     //         return Ok(())
+//     //     }
+//     //     //accept_connection(stream, state.map.get(item).unwrap().value().clone(), id.to_owned()).await?;
+//     //     //state.map.get(item).unwrap().send_main(ProtocolMessage::Message())
+//     //  } else {   
+//     //     stream.write_all(basic_response(StatusCode::BAD_REQUEST).as_bytes()).await?;
+//     //  }
      
 
 
-    // println!("Received a request {:?}", parsed);
+//     // println!("Received a request {:?}", parsed);
 
-    Ok(())
-}
+//     Ok(())
+// }
 
-pub async fn run_server_listener(state: Arc<KubeportServer>, server: Arc<TcpListener>) {
-    loop {
-        let stream = server.accept().await.unwrap().0;
+// pub async fn run_server_listener(state: Arc<KubeportServer>, server: Arc<TcpListener>) {
+//     loop {
+//         let stream = server.accept().await.unwrap().0;
 
-        tokio::spawn({
-            let id = uuid7();
-            let state = Arc::clone(&state);
+//         tokio::spawn({
+//             let id = uuid7();
+//             let state = Arc::clone(&state);
             
-            //let server = Arc::clone(&server);
-            async move {
+//             //let server = Arc::clone(&server);
+//             async move {
 
                 
 
-                handle_raw_request(&id, state, stream).await.unwrap();
+//                 handle_raw_request(&id, state, stream).await.unwrap();
 
-                //accept_connection(stream, state.map.get("name").unwrap().clone(), id).await.unwrap();
+//                 //accept_connection(stream, state.map.get("name").unwrap().clone(), id).await.unwrap();
                 
 
-                //let mut buffer = [0u8; 4096];
-                //let rd = stream.read(&mut buffer).await.unwrap();
-                //handle_raw_request(&id, state, stream, &buffer[..rd]).boxed().await.unwrap();
+//                 //let mut buffer = [0u8; 4096];
+//                 //let rd = stream.read(&mut buffer).await.unwrap();
+//                 //handle_raw_request(&id, state, stream, &buffer[..rd]).boxed().await.unwrap();
 
                
-            }
-        });
-    }
-}
+//             }
+//         });
+//     }
+// }
 
 pub async fn run_kubeport_server(server: Arc<KubeportServer>) {
 
