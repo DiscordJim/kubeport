@@ -97,50 +97,50 @@ impl<T> SimpleChannel<T> {
     }
 }
 
-pub struct ChannelDistributor<U, T>
-    where
-        U: Hash + Eq + Clone
-    {
+// pub struct ChannelDistributor<U, T>
+//     where
+//         U: Hash + Eq + Clone
+//     {
 
-    buf_size: usize,
-    cmap: DashMap<U, Arc<SimpleChannel<T>>>
-}
+//     buf_size: usize,
+//     cmap: DashMap<U, Arc<SimpleChannel<T>>>
+// }
 
-impl<U, T> ChannelDistributor<U, T>
-    where U: Hash + Eq + Clone
-    {
-    pub fn new(cap: usize) -> Self {
-        Self {
-            buf_size: cap,
-            cmap: DashMap::<U, Arc<SimpleChannel<T>>>::new()
-        }
-    }
-    pub async fn get_channel(&self, id: &U) -> Arc<SimpleChannel<T>> {
-        if !self.cmap.contains_key(&id) {
-            self.cmap.insert(id.clone(), Arc::new(SimpleChannel::new(self.buf_size)));
-        }
-        Arc::clone(self.cmap.get(&id).unwrap().value())
-    }
-    pub fn has_topic(&self, id: &U) -> bool {
-        self.cmap.contains_key(id)
-    }
-    pub fn remove_topic(&self, id: &U) {
-        self.cmap.remove(id);
-    }
-    // pub async fn submit(&self, id: &U, msg: T) -> Result<()> {
-    //     if !self.cmap.contains_key(&id) {
-    //         self.cmap.insert(id.clone(), SimpleChannel::new(self.buf_size));
-    //     }
-    //     self.cmap.get(&id).ok_or_else(|| anyhow!("No channel found."))?.send(msg).await.map_err(|_| anyhow!("Failed to send."))?;
-    //     Ok(())
-    // }
-    // pub async fn recv(&self, id: &U) -> Result<T> {
-    //     if !self.cmap.contains_key(&id) {
-    //         self.cmap.insert(id.clone(), SimpleChannel::new(self.buf_size));
-    //     }
-    //     Ok(self.cmap.get(id).ok_or_else(|| anyhow!("No channel found."))?.recv().await?)
-    // }
-}
+// impl<U, T> ChannelDistributor<U, T>
+//     where U: Hash + Eq + Clone
+//     {
+//     pub fn new(cap: usize) -> Self {
+//         Self {
+//             buf_size: cap,
+//             cmap: DashMap::<U, Arc<SimpleChannel<T>>>::new()
+//         }
+//     }
+//     pub async fn get_channel(&self, id: &U) -> Arc<SimpleChannel<T>> {
+//         if !self.cmap.contains_key(&id) {
+//             self.cmap.insert(id.clone(), Arc::new(SimpleChannel::new(self.buf_size)));
+//         }
+//         Arc::clone(self.cmap.get(&id).unwrap().value())
+//     }
+//     pub fn has_topic(&self, id: &U) -> bool {
+//         self.cmap.contains_key(id)
+//     }
+//     pub fn remove_topic(&self, id: &U) {
+//         self.cmap.remove(id);
+//     }
+//     // pub async fn submit(&self, id: &U, msg: T) -> Result<()> {
+//     //     if !self.cmap.contains_key(&id) {
+//     //         self.cmap.insert(id.clone(), SimpleChannel::new(self.buf_size));
+//     //     }
+//     //     self.cmap.get(&id).ok_or_else(|| anyhow!("No channel found."))?.send(msg).await.map_err(|_| anyhow!("Failed to send."))?;
+//     //     Ok(())
+//     // }
+//     // pub async fn recv(&self, id: &U) -> Result<T> {
+//     //     if !self.cmap.contains_key(&id) {
+//     //         self.cmap.insert(id.clone(), SimpleChannel::new(self.buf_size));
+//     //     }
+//     //     Ok(self.cmap.get(id).ok_or_else(|| anyhow!("No channel found."))?.recv().await?)
+//     // }
+// }
 
 
 pub struct WebsocketProxy {
