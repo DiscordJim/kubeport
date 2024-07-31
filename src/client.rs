@@ -3,13 +3,23 @@
 use std::{net::SocketAddr, str::from_utf8};
 
 use anyhow::Result;
+use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
+use once_cell::sync::OnceCell;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::OwnedWriteHalf, TcpStream}, sync::Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{error, info};
+use uuid7::Uuid;
 
-use crate::commons::{configure_system_logger, ControlCode, ProtocolMessage, WebsocketMessage};
+use crate::{commons::configure_system_logger, protocol::messages::{ControlCode, ProtocolMessage, WebsocketMessage}};
 
+
+
+pub struct ConnectionState {
+    stream: TcpStream
+}
+
+static CONN_MAP: OnceCell<DashMap<Uuid, ConnectionState>> = OnceCell::new();
 
 
 
@@ -20,11 +30,23 @@ const LOCAL_SERVICE_PORT: u16 = 4032;
 pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, bytes: Vec<u8>) -> Result<()> {
 
     match bincode::deserialize::<ProtocolMessage>(&bytes)? {
+        ProtocolMessage::Open(id) => {
+            info!("Received request to open up.");
+            if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
+                info!("Succesfully opened a new stream.");
+                CONN_MAP.get().unwrap().insert(id, ConnectionState {
+                    stream
+                });
+            }
+            
+        },
         ProtocolMessage::Message(msg) => {
 
-            if let Ok(mut stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
-                println!("Connecting to service.");
+            // if let Ok(mut stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
+            //     println!("Connecting to service.");
 
+
+            let stream = &mut CONN_MAP.get().unwrap().get_mut(&msg.id).unwrap().stream;
 
                 stream.write_all(&msg.data).await.unwrap();
                 println!("SENT BYTES.");
@@ -32,7 +54,7 @@ pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpSt
                 let buf: &mut [u8] = &mut [0u8; 8096];
                 while let Ok(data) = stream.read(buf).await {
                     if data == 0 {
-                        println!("Done transmission.");
+                        info!("Done transmission.");
 
                         let protocol = ProtocolMessage::Message(WebsocketMessage {
                             id: msg.id.clone(),
@@ -50,13 +72,14 @@ pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpSt
                         data: buf[..data].to_vec()
                     }).serialize().await {
                         println!("| -> Push {} bytes", pbytes.len());
-                        println!("| MESSAGE: {:?}", from_utf8(&buf[..data]));
+                       // println!("| MESSAGE: {:?}", from_utf8(&buf[..data]));
                         ws_stream.send(Message::Binary(pbytes)).await.unwrap();
                     }
                 }
                 println!("Bro");
-            }
-        }
+            // }
+        },
+        _ => {}
     }
             
     Ok(())
@@ -64,10 +87,13 @@ pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpSt
 
 
 
+
 pub async fn run_client() -> Result<()> {
 
 
     configure_system_logger("logs");
+
+    CONN_MAP.set(DashMap::new());
 
 
     // if let Ok(mut stream) = TcpStream::connect("localhost:4032").await {
@@ -106,6 +132,10 @@ pub async fn run_client() -> Result<()> {
     let ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>> = &mut connect_async(format!("ws://localhost:8000/forward/{SERVICE_NAME}")).await?.0;
     info!("Forwarding 127.0.0.1:{LOCAL_SERVICE_PORT} -> remote::/[{SERVICE_NAME}]");
 
+
+
+    ws_stream.send(ProtocolMessage::Establish(String::from("name")).to_message().await.unwrap()).await.unwrap();
+
     //let (ws_write, mut ws_read) = ws_stream.split();
     
     //let ws_write = Arc::new(Mutex::new(ws_write));
@@ -120,6 +150,7 @@ pub async fn run_client() -> Result<()> {
         match ws_stream.next().await {
             Some(Ok(v)) => {
                 if let Message::Binary(bytes) = v {
+                    println!("Received a message.");
                     handle_message(ws_stream, bytes).await?;
                 }
                

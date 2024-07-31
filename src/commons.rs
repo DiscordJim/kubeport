@@ -4,19 +4,20 @@
 use std::{hash::Hash, path::Path, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 
 use anyhow::Result;
-use axum::extract::ws::{Message, WebSocket};
+
 use dashmap::DashMap;
 use flume::{Receiver, RecvError, SendError, Sender};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
+use tokio::{net::TcpStream, sync::Notify};
+use tokio_tungstenite::{tungstenite::{Message, WebSocket}, WebSocketStream};
 use tracing::{error, info, Level};
 use tracing_appender::rolling::daily;
 use tracing_subscriber::{fmt::Layer, layer::SubscriberExt, util::SubscriberInitExt, FmtSubscriber};
 use uuid7::Uuid;
 use anyhow::anyhow;
 
-use crate::sync::{coordinator::AsyncCoordinator, distributed::DistributedSPMC};
+use crate::{protocol::messages::{ProtocolMessage, WebsocketMessage}, sync::{coordinator::AsyncCoordinator, distributed::DistributedSPMC}};
 
 pub const CHANNEL_SIZE: usize = 10;
 
@@ -144,7 +145,7 @@ impl<T> SimpleChannel<T> {
 
 
 pub struct WebsocketProxy {
-    communicator: SimpleChannel<ProtocolMessage>,
+    communicator: (Sender<ProtocolMessage>, Receiver<ProtocolMessage>),
     coordinator: Arc<AsyncCoordinator>,
     //distributor: Arc<ChannelDistributor<Uuid, WebsocketMessage>>
     distributor: Arc<DistributedSPMC<Uuid, WebsocketMessage>>
@@ -162,41 +163,16 @@ impl Clone for WebsocketProxy {
 }
 
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-pub enum ControlCode {
-    Neutral,
-    Open,
-    Close
-}
-
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WebsocketMessage {
-    pub id: Uuid,
-    pub code: ControlCode,
-    pub data: Vec<u8>
-}
 
 
 
 
-#[derive(Serialize, Deserialize, Debug)]
-pub enum ProtocolMessage {
-    //Open(Uuid),
-    Message(WebsocketMessage),
-    // Close(Uuid)
 
-}
 
-impl ProtocolMessage {
-    pub async fn serialize(&self) -> Result<Vec<u8>> {
-        Ok(bincode::serialize(self)?)
-    }
-}
 
 impl WebsocketProxy {
-    pub fn create(ws: WebSocket) -> Self {
-        let wschannel = SimpleChannel::<ProtocolMessage>::new(CHANNEL_SIZE);
+    pub fn create(ws: WebSocketStream<TcpStream>) -> Self {
+        let wschannel = flume::bounded::<ProtocolMessage>(CHANNEL_SIZE);
         // let (send, recv) = flume::bounded::<ProtocolMessage>(300);
 
         let coordinator = Arc::new(AsyncCoordinator::new());
@@ -224,14 +200,14 @@ impl WebsocketProxy {
                     } {
                         Some(Ok(message)) => {
                             if let Message::Binary(content) = message {
-                                println!("Getting raw message");
+                                info!("Getting raw message");
                                 if let Ok(ProtocolMessage::Message(msg)) = bincode::deserialize(&content) {
                                     let id = msg.id.clone();
-                                    println!("Getting message.");
+                                    info!("Getting message.");
                                     if !distributor.has_topic(&id) {
                                         continue
                                     }
-                                    println!("Submitting to distributor... {} {}", msg.id, msg.data.len());
+                                    info!("Submitting to distributor... {} {}", msg.id, msg.data.len());
                                 
                                     //if let Err(e) = distributor.get_channel(&id).await.send(msg).await {
                                     if let Err(e) = distributor.publish(&id, msg).await { 
@@ -279,7 +255,7 @@ impl WebsocketProxy {
 
                     //println!("Waiting");
                     match tokio::select! {
-                        p = wschannel.recv() => p,
+                        p = wschannel.1.recv_async() => p,
                         _ = coordinator.wait_on_change() => {
                             //error!("Detected a state change.");
                             break
@@ -316,7 +292,7 @@ impl WebsocketProxy {
         }
     }
     pub async fn send_main(&self, msg: ProtocolMessage) -> Result<()> {
-        self.communicator.send(msg).await?;
+        self.communicator.0.send_async(msg).await?;
         Ok(())
     }
     // pub async fn get_channel(&self, id: &Uuid) -> Arc<SimpleChannel<WebsocketMessage>> {
