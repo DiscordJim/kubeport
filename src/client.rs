@@ -6,13 +6,13 @@ use anyhow::Result;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use once_cell::sync::OnceCell;
-use rkyv::{ser::{serializers::AllocSerializer, Serializer}, Archive, Deserialize, Serialize};
+use rkyv::{ser::{serializers::AllocSerializer, Serializer}, AlignedVec, Archive, Deserialize, Serialize};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::OwnedWriteHalf, TcpStream}, sync::Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{error, info};
 use uuid7::Uuid;
 
-use crate::{commons::configure_system_logger, protocol::messages::{ControlCode, ProtocolMessage, WebsocketMessage}};
+use crate::{commons::configure_system_logger, protocol::messages::{ArchivedProtocolMessage, ControlCode, ProtocolMessage, WebsocketMessage}};
 
 
 #[derive(Debug)]
@@ -31,19 +31,24 @@ const LOCAL_SERVICE_PORT: u16 = 4032;
 pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, bytes: Vec<u8>) -> Result<()> {
     
 
+    let mut nv = AlignedVec::new();
+    nv.extend_from_slice(&bytes);
 
-    match ProtocolMessage::deserialize(&bytes)? {
-        ProtocolMessage::Open(id) => {
+    let bytes = nv;
+
+
+    match ProtocolMessage::from_bytes(&bytes)? {
+        ArchivedProtocolMessage::Open(id) => {
             info!("Received request to open up.");
             if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
                 info!("Succesfully opened a new stream.");
-                CONN_MAP.get().unwrap().insert(id, ConnectionState {
+                CONN_MAP.get().unwrap().insert(*id, ConnectionState {
                     stream
                 });
             }
             
         },
-        ProtocolMessage::Message(msg) => {
+        ArchivedProtocolMessage::Message(msg) => {
 
             // if let Ok(mut stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
             //     println!("Connecting to service.");
@@ -65,7 +70,7 @@ pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpSt
                             data: Vec::new()
                         });
 
-                        ws_stream.send(Message::Binary(protocol.serialize().unwrap())).await.unwrap();
+                        ws_stream.send(Message::Binary(protocol.to_bytes().unwrap().into_vec())).await.unwrap();
                         println!("send");
                         break;
                     }
@@ -73,10 +78,10 @@ pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpSt
                         id: msg.id.clone(),
                         code: ControlCode::Neutral,
                         data: buf[..data].to_vec()
-                    }).serialize() {
+                    }).to_bytes() {
                         println!("| -> Push {} bytes", pbytes.len());
                        // println!("| MESSAGE: {:?}", from_utf8(&buf[..data]));
-                        ws_stream.send(Message::Binary(pbytes)).await.unwrap();
+                        ws_stream.send(Message::Binary(pbytes.into_vec())).await.unwrap();
                     }
                 }
                 println!("Bro");
@@ -113,6 +118,12 @@ pub async fn run_client() -> Result<()> {
     // let archived = rkyv::access::<Test>(&bytes[..]).unwrap();
     // println!("Archived: {:?}", test.int);
 
+
+    // let proc = ProtocolMessage::Establish(1).to_bytes()?;
+    // println!("proc: {:?}", proc);
+
+    // let proc = ProtocolMessage::from_bytes(&proc[..])?;
+    // println!("DESERIALIZED");
 
     // exit(1);
 
@@ -164,9 +175,19 @@ pub async fn run_client() -> Result<()> {
 
 
     info!("Sending establishment...");
-    ws_stream.send(ProtocolMessage::Establish(String::from("name")).to_message().await.unwrap()).await.unwrap();
+    let liquid = ProtocolMessage::Establish(0).to_bytes()?;
+    // println!("Bytes: {:?}", liquid);
 
-    info!("Establishment received...");
+    // // let mut bro = AlignedVec::new();
+    // // bro.extend_from_slice(liquid.as_ref());
+
+    // // ProtocolMessage::from_bytes(bro.as_ref()).unwrap();
+    // println!("Deserialized {:?}", bro.len());
+    ws_stream.send(Message::Binary(liquid.into_vec())).await?;
+
+    // ws_stream.send(ProtocolMessage::Establish(0).to_message().await.unwrap()).await.unwrap();
+
+    info!("Establishment sent...");
     //let (ws_write, mut ws_read) = ws_stream.split();
     
     //let ws_write = Arc::new(Mutex::new(ws_write));

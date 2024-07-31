@@ -170,140 +170,140 @@ impl Clone for WebsocketProxy {
 
 
 
-impl WebsocketProxy {
-    pub fn create(ws: WebSocketStream<TcpStream>) -> Self {
-        let wschannel = flume::bounded::<ProtocolMessage>(CHANNEL_SIZE);
-        // let (send, recv) = flume::bounded::<ProtocolMessage>(300);
+// impl WebsocketProxy {
+//     pub fn create(ws: WebSocketStream<TcpStream>) -> Self {
+//         let wschannel = flume::bounded::<ProtocolMessage>(CHANNEL_SIZE);
+//         // let (send, recv) = flume::bounded::<ProtocolMessage>(300);
 
-        let coordinator = Arc::new(AsyncCoordinator::new());
+//         let coordinator = Arc::new(AsyncCoordinator::new());
 
 
-        //let distributor = Arc::new(ChannelDistributor::new(CHANNEL_SIZE));
-        let distributor = Arc::new(FastDistributedSPMC::new(CHANNEL_SIZE));
+//         //let distributor = Arc::new(ChannelDistributor::new(CHANNEL_SIZE));
+//         let distributor = Arc::new(FastDistributedSPMC::new(CHANNEL_SIZE));
 
-        let (mut ws_sender, mut ws_receiver) = ws.split();
+//         let (mut ws_sender, mut ws_receiver) = ws.split();
 
-        tokio::spawn({
-            let coordinator = Arc::clone(&coordinator);
-            //let send = send.clone();
-            println!("Creating listener.");
-            let distributor = Arc::clone(&distributor);
-            async move {
+//         tokio::spawn({
+//             let coordinator = Arc::clone(&coordinator);
+//             //let send = send.clone();
+//             println!("Creating listener.");
+//             let distributor = Arc::clone(&distributor);
+//             async move {
 
-                loop {
-                    match tokio::select! {
-                        p = ws_receiver.next() => p,
-                        _ = coordinator.wait_on_change() => {
-                            //error!("Detected a state change.");
-                            break
-                        }
-                    } {
-                        Some(Ok(message)) => {
-                            if let Message::Binary(content) = message {
-                                info!("Getting raw message");
-                                if let Ok(ProtocolMessage::Message(msg)) = ProtocolMessage::deserialize(&content) {
-                                    let id = msg.id.clone();
-                                    info!("Getting message.");
-                                    if !distributor.has_topic(&id) {
-                                        continue
-                                    }
-                                    info!("Submitting to distributor... {} {}", msg.id, msg.data.len());
+//                 loop {
+//                     match tokio::select! {
+//                         p = ws_receiver.next() => p,
+//                         _ = coordinator.wait_on_change() => {
+//                             //error!("Detected a state change.");
+//                             break
+//                         }
+//                     } {
+//                         Some(Ok(message)) => {
+//                             if let Message::Binary(content) = message {
+//                                 info!("Getting raw message");
+//                                 if let Ok(ProtocolMessage::Message(msg)) = ProtocolMessage::deserialize(&content) {
+//                                     let id = msg.id.clone();
+//                                     info!("Getting message.");
+//                                     if !distributor.has_topic(&id) {
+//                                         continue
+//                                     }
+//                                     info!("Submitting to distributor... {} {}", msg.id, msg.data.len());
                                 
-                                    //if let Err(e) = distributor.get_channel(&id).await.send(msg).await {
-                                    if let Err(e) = distributor.publish(&id, msg).await { 
-                                        error!("Failed to publish to distributor with error: {e}. Doing best effort to remove the topic.");
-                                        let _ = distributor.remove_topic(&id);
-                                    }
-                                    // match distributor.get_channel(&msg.id).await.recv().await {
-                                    //     Ok(v) => 
-                                    // }
-                                    // distributor.submit(&msg.id.clone(), msg).await.unwrap();
-                                } 
-                            }
+//                                     //if let Err(e) = distributor.get_channel(&id).await.send(msg).await {
+//                                     if let Err(e) = distributor.publish(&id, msg).await { 
+//                                         error!("Failed to publish to distributor with error: {e}. Doing best effort to remove the topic.");
+//                                         let _ = distributor.remove_topic(&id);
+//                                     }
+//                                     // match distributor.get_channel(&msg.id).await.recv().await {
+//                                     //     Ok(v) => 
+//                                     // }
+//                                     // distributor.submit(&msg.id.clone(), msg).await.unwrap();
+//                                 } 
+//                             }
     
-                        },
-                        Some(Err(e)) => {
-                            error!("Write loop received an error: {e}. Shutting down.");
-                            coordinator.shutdown();
-                            break
-                        },
-                        None => {
-                            error!("Write loop received none as a message. Shutting down.");
-                            coordinator.shutdown();
-                            break
-                        }
-                    }
-                }
+//                         },
+//                         Some(Err(e)) => {
+//                             error!("Write loop received an error: {e}. Shutting down.");
+//                             coordinator.shutdown();
+//                             break
+//                         },
+//                         None => {
+//                             error!("Write loop received none as a message. Shutting down.");
+//                             coordinator.shutdown();
+//                             break
+//                         }
+//                     }
+//                 }
 
                 
 
 
-                // while let Message::Binary(bin) = ws_receiver.next().await.unwrap().unwrap() {
+//                 // while let Message::Binary(bin) = ws_receiver.next().await.unwrap().unwrap() {
                     
-                // }
-                info!("Write loop succesfully shutdown.");
-            }
+//                 // }
+//                 info!("Write loop succesfully shutdown.");
+//             }
             
-        });
+//         });
 
-        tokio::spawn({
-            // let recv = recv.clone();
-            let coordinator = Arc::clone(&coordinator);
-            let wschannel = wschannel.clone();
-            async move {
-                loop {
+//         tokio::spawn({
+//             // let recv = recv.clone();
+//             let coordinator = Arc::clone(&coordinator);
+//             let wschannel = wschannel.clone();
+//             async move {
+//                 loop {
 
-                    //println!("Waiting");
-                    match tokio::select! {
-                        p = wschannel.1.recv_async() => p,
-                        _ = coordinator.wait_on_change() => {
-                            //error!("Detected a state change.");
-                            break
-                        }
-                    } {
-                        Ok(protocol_message) => {
-                            ws_sender.send(Message::Binary(protocol_message.serialize().unwrap())).await.unwrap();
-                        },
-                        Err(e) => {
-                            error!("The receiving channel encountered an error: {e}");
-                        }
-                    }
-                }
+//                     //println!("Waiting");
+//                     match tokio::select! {
+//                         p = wschannel.1.recv_async() => p,
+//                         _ = coordinator.wait_on_change() => {
+//                             //error!("Detected a state change.");
+//                             break
+//                         }
+//                     } {
+//                         Ok(protocol_message) => {
+//                             ws_sender.send(Message::Binary(protocol_message.serialize().unwrap())).await.unwrap();
+//                         },
+//                         Err(e) => {
+//                             error!("The receiving channel encountered an error: {e}");
+//                         }
+//                     }
+//                 }
 
-                info!("Read loop succesfully shutdown.");
+//                 info!("Read loop succesfully shutdown.");
                 
 
-                // while let Ok(msg) = wschannel.recv().await {
-                //     println!("Got a message");
-                //     ws_sender.send(Message::Binary(msg.serialize().await.unwrap())).await.unwrap();
-                // }
-                // info!("Shut down stream.");
-            }
+//                 // while let Ok(msg) = wschannel.recv().await {
+//                 //     println!("Got a message");
+//                 //     ws_sender.send(Message::Binary(msg.serialize().await.unwrap())).await.unwrap();
+//                 // }
+//                 // info!("Shut down stream.");
+//             }
         
-        });
+//         });
 
 
 
 
-        Self {
-            communicator: wschannel,
-            coordinator,
-            distributor
-        }
-    }
-    pub async fn send_main(&self, msg: ProtocolMessage) -> Result<()> {
-        self.communicator.0.send_async(msg).await?;
-        Ok(())
-    }
-    // pub async fn get_channel(&self, id: &Uuid) -> Arc<SimpleChannel<WebsocketMessage>> {
-    //     self.distributor.get_channel(id).await
-    // }
-    pub fn get_distributor(&self) -> Arc<FastDistributedSPMC<u32, WebsocketMessage>> {
-        Arc::clone(&self.distributor)
-    }
-    pub fn get_coordinator(&self) -> Arc<AsyncCoordinator> {
-        Arc::clone(&self.coordinator)
-    }
-}
+//         Self {
+//             communicator: wschannel,
+//             coordinator,
+//             distributor
+//         }
+//     }
+//     pub async fn send_main(&self, msg: ProtocolMessage) -> Result<()> {
+//         self.communicator.0.send_async(msg).await?;
+//         Ok(())
+//     }
+//     // pub async fn get_channel(&self, id: &Uuid) -> Arc<SimpleChannel<WebsocketMessage>> {
+//     //     self.distributor.get_channel(id).await
+//     // }
+//     pub fn get_distributor(&self) -> Arc<FastDistributedSPMC<u32, WebsocketMessage>> {
+//         Arc::clone(&self.distributor)
+//     }
+//     pub fn get_coordinator(&self) -> Arc<AsyncCoordinator> {
+//         Arc::clone(&self.coordinator)
+//     }
+// }
 
 
