@@ -10,6 +10,8 @@ pub struct Args {
 }
 
 
+//rkyv = { version = "0.7.44", features = ["bytecheck", "validation"] }
+
 #[derive(Parser, Debug, PartialEq)]
 pub enum Command {
     Client,

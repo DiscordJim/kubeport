@@ -5,17 +5,17 @@ use std::hash::Hash;
 
 /// A distributed channel where there is a single point of entry but we can
 /// listen on multiple fronts.
-pub struct DistributedSPMC<U, T>
+pub struct FastDistributedSPMC<U, T>
 where
-    U: Hash + Eq + Clone,
+    U: Hash + Eq + Copy,
 {
     buffer_size: usize,
     channel_map: DashMap<U, (Sender<T>, Receiver<T>)>,
 }
 
-impl<U, T> DistributedSPMC<U, T>
+impl<U, T> FastDistributedSPMC<U, T>
 where
-    U: Hash + Eq + Clone,
+    U: Hash + Eq + Copy,
 {
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -32,7 +32,7 @@ where
         if !self.channel_map.contains_key(&channel) {
             let (s, r) = flume::bounded::<T>(self.buffer_size);
             self.channel_map
-                .insert(channel.clone(), (s, r));
+                .insert(*channel, (s, r));
         }
     } 
     /// Publishes a message to a channel, creating a channel if it does

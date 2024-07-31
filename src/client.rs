@@ -1,11 +1,12 @@
 
 
-use std::{net::SocketAddr, str::from_utf8};
+use std::{net::SocketAddr, process::exit, str::from_utf8};
 
 use anyhow::Result;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use once_cell::sync::OnceCell;
+use rkyv::{ser::{serializers::AllocSerializer, Serializer}, Archive, Deserialize, Serialize};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::OwnedWriteHalf, TcpStream}, sync::Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{error, info};
@@ -14,12 +15,12 @@ use uuid7::Uuid;
 use crate::{commons::configure_system_logger, protocol::messages::{ControlCode, ProtocolMessage, WebsocketMessage}};
 
 
-
+#[derive(Debug)]
 pub struct ConnectionState {
     stream: TcpStream
 }
 
-static CONN_MAP: OnceCell<DashMap<Uuid, ConnectionState>> = OnceCell::new();
+static CONN_MAP: OnceCell<DashMap<u32, ConnectionState>> = OnceCell::new();
 
 
 
@@ -28,8 +29,10 @@ const SERVICE_NAME: &str = "name";
 const LOCAL_SERVICE_PORT: u16 = 4032;
 
 pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>, bytes: Vec<u8>) -> Result<()> {
+    
 
-    match bincode::deserialize::<ProtocolMessage>(&bytes)? {
+
+    match ProtocolMessage::deserialize(&bytes)? {
         ProtocolMessage::Open(id) => {
             info!("Received request to open up.");
             if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
@@ -62,7 +65,7 @@ pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpSt
                             data: Vec::new()
                         });
 
-                        ws_stream.send(Message::Binary(protocol.serialize().await.unwrap())).await.unwrap();
+                        ws_stream.send(Message::Binary(protocol.serialize().unwrap())).await.unwrap();
                         println!("send");
                         break;
                     }
@@ -70,7 +73,7 @@ pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpSt
                         id: msg.id.clone(),
                         code: ControlCode::Neutral,
                         data: buf[..data].to_vec()
-                    }).serialize().await {
+                    }).serialize() {
                         println!("| -> Push {} bytes", pbytes.len());
                        // println!("| MESSAGE: {:?}", from_utf8(&buf[..data]));
                         ws_stream.send(Message::Binary(pbytes)).await.unwrap();
@@ -86,14 +89,40 @@ pub async fn handle_message(ws_stream: &mut WebSocketStream<MaybeTlsStream<TcpSt
 }
 
 
+use anyhow::Error;
+
+#[derive(Archive, Deserialize, Serialize)]
+#[archive(check_bytes)]
+pub struct Test {
+    int: u8
+}
 
 
 pub async fn run_client() -> Result<()> {
 
+    // let test = Test { 
+    //     int: 3
+    // };
+
+    // let mut serializer = AllocSerializer::<0>::default();
+    // serializer.serialize_value(&test).unwrap();
+    // let bytes = serializer.into_serializer().into_inner();
+
+    // // let bytes = rkyv::to_bytes::<_, 4>(&test).unwrap();
+
+    // let archived = rkyv::access::<Test>(&bytes[..]).unwrap();
+    // println!("Archived: {:?}", test.int);
+
+
+    // exit(1);
+
 
     configure_system_logger("logs");
 
-    CONN_MAP.set(DashMap::new());
+
+
+
+    CONN_MAP.set(DashMap::new()).unwrap();
 
 
     // if let Ok(mut stream) = TcpStream::connect("localhost:4032").await {
@@ -134,8 +163,10 @@ pub async fn run_client() -> Result<()> {
 
 
 
+    info!("Sending establishment...");
     ws_stream.send(ProtocolMessage::Establish(String::from("name")).to_message().await.unwrap()).await.unwrap();
 
+    info!("Establishment received...");
     //let (ws_write, mut ws_read) = ws_stream.split();
     
     //let ws_write = Arc::new(Mutex::new(ws_write));

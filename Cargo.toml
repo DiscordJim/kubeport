@@ -21,4 +21,8 @@ tracing = "0.1.40"
 tracing-subscriber = { version="0.3.18", features= ["chrono"] }
 tracing-appender = "0.2.3"
 once_cell = "1.19.0"
+rkyv = { version = "0.7.44", features = ["bytecheck", "validation"] }
+fastwebsockets = "0.8.0"
+
+
 

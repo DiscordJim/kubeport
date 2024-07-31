@@ -91,7 +91,7 @@ pub async fn run_kubeport_server(server: Arc<KubeportServer>) {
 
 pub async fn handle_tcp_pair(server: Arc<KubeportServer>, conn: TcpStream, addr: SocketAddr) -> Result<()> {
     
-    let id = uuid7();
+    let id = 0;
 
     let proxy = server.map.get("name").unwrap().clone();
 
@@ -135,7 +135,7 @@ pub async fn handle_tcp_pair(server: Arc<KubeportServer>, conn: TcpStream, addr:
     // Write loop.
     tokio::spawn({
         let proxy = proxy.clone();
-        let id = id.clone();
+
         let coordinator = Arc::clone(&coordinator);
         async move {
             loop {
@@ -174,20 +174,16 @@ pub async fn start_websocket_server(server: Arc<KubeportServer>) {
 
 }
 
-pub async fn read_protocol_message(stream: &mut WebSocketStream<TcpStream>) -> Option<ProtocolMessage> {
-    if let Message::Binary(contents) = stream.next().await?.ok()? {
-        bincode::deserialize::<ProtocolMessage>(&contents).ok()
-    } else {
-        None
-    }
-}
-
 
 pub async fn handle_ws_conn(state: Arc<KubeportServer>, stream: TcpStream, addr: SocketAddr) {
     let mut ws_stream = tokio_tungstenite::accept_async(stream).await.unwrap();
     info!("Established a WebSocket connection on {}", addr);
 
-    if let Some(ProtocolMessage::Establish(stream)) = read_protocol_message(&mut ws_stream).await {
+    if let Some(ProtocolMessage::Establish(stream)) = if let Message::Binary(contents) = ws_stream.next().await.unwrap().unwrap() {
+        ProtocolMessage::deserialize(&contents).ok()
+    } else {
+        None
+    } {
         info!("Received establishment packet. Requesting a service ID of {stream}.");
 
 

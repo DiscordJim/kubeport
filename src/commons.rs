@@ -17,7 +17,7 @@ use tracing_subscriber::{fmt::Layer, layer::SubscriberExt, util::SubscriberInitE
 use uuid7::Uuid;
 use anyhow::anyhow;
 
-use crate::{protocol::messages::{ProtocolMessage, WebsocketMessage}, sync::{coordinator::AsyncCoordinator, distributed::DistributedSPMC}};
+use crate::{protocol::messages::{ProtocolMessage, WebsocketMessage}, sync::{coordinator::AsyncCoordinator, distributed::FastDistributedSPMC}};
 
 pub const CHANNEL_SIZE: usize = 10;
 
@@ -148,7 +148,7 @@ pub struct WebsocketProxy {
     communicator: (Sender<ProtocolMessage>, Receiver<ProtocolMessage>),
     coordinator: Arc<AsyncCoordinator>,
     //distributor: Arc<ChannelDistributor<Uuid, WebsocketMessage>>
-    distributor: Arc<DistributedSPMC<Uuid, WebsocketMessage>>
+    distributor: Arc<FastDistributedSPMC<u32, WebsocketMessage>>
     //recv: Receiver<WebsocketMessage>
 }
 
@@ -179,7 +179,7 @@ impl WebsocketProxy {
 
 
         //let distributor = Arc::new(ChannelDistributor::new(CHANNEL_SIZE));
-        let distributor = Arc::new(DistributedSPMC::new(CHANNEL_SIZE));
+        let distributor = Arc::new(FastDistributedSPMC::new(CHANNEL_SIZE));
 
         let (mut ws_sender, mut ws_receiver) = ws.split();
 
@@ -201,7 +201,7 @@ impl WebsocketProxy {
                         Some(Ok(message)) => {
                             if let Message::Binary(content) = message {
                                 info!("Getting raw message");
-                                if let Ok(ProtocolMessage::Message(msg)) = bincode::deserialize(&content) {
+                                if let Ok(ProtocolMessage::Message(msg)) = ProtocolMessage::deserialize(&content) {
                                     let id = msg.id.clone();
                                     info!("Getting message.");
                                     if !distributor.has_topic(&id) {
@@ -262,7 +262,7 @@ impl WebsocketProxy {
                         }
                     } {
                         Ok(protocol_message) => {
-                            ws_sender.send(Message::Binary(protocol_message.serialize().await.unwrap())).await.unwrap();
+                            ws_sender.send(Message::Binary(protocol_message.serialize().unwrap())).await.unwrap();
                         },
                         Err(e) => {
                             error!("The receiving channel encountered an error: {e}");
@@ -298,7 +298,7 @@ impl WebsocketProxy {
     // pub async fn get_channel(&self, id: &Uuid) -> Arc<SimpleChannel<WebsocketMessage>> {
     //     self.distributor.get_channel(id).await
     // }
-    pub fn get_distributor(&self) -> Arc<DistributedSPMC<Uuid, WebsocketMessage>> {
+    pub fn get_distributor(&self) -> Arc<FastDistributedSPMC<u32, WebsocketMessage>> {
         Arc::clone(&self.distributor)
     }
     pub fn get_coordinator(&self) -> Arc<AsyncCoordinator> {
