@@ -81,45 +81,6 @@ pub async fn handle_message(state: &Arc<ClientState>,  bytes: AlignedVec) -> Res
         ArchivedProtocolMessage::Open(id) => start_new_connection(&state, *id).await?,
         ArchivedProtocolMessage::Message(msg) => {
             state.send(msg.id, &msg.data).await?;
-
-
-          
-
-
-            // let stream = &mut CONN_MAP.get().unwrap().get_mut(&msg.id).unwrap().stream;
-
-            //     stream.write_all(&msg.data).await.unwrap();
-            //     println!("SENT BYTES.");
-
-            //     let buf: &mut [u8] = &mut [0u8; 8096];
-            //     while let Ok(data) = stream.read(buf).await {
-            //         if data == 0 {
-            //             info!("Done transmission.");
-
-            //             let protocol = ProtocolMessage::Message(WebsocketMessage {
-            //                 id: msg.id.clone(),
-            //                 code: ControlCode::Close,
-            //                 data: Vec::new()
-            //             });
-
-            //             ws_stream.send(protocol.to_bytes()?).await?;
-            //             //ws_stream.send(Message::Binary(protocol.to_bytes().unwrap().into_vec())).await.unwrap();
-            //             println!("send");
-            //             break;
-            //         }
-            //         if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
-            //             id: msg.id.clone(),
-            //             code: ControlCode::Neutral,
-            //             data: buf[..data].to_vec()
-            //         }).to_bytes() {
-            //             println!("| -> Push {} bytes", pbytes.len());
-            //            println!("| MESSAGE: {:?}", from_utf8(&buf[..data]));
-            //            ws_stream.send(pbytes).await?;
-            //             // ws_stream.send(Message::Binary(pbytes.into_vec())).await.unwrap();
-            //         }
-            //     }
-            
-            // }
         },
         _ => {}
     }
@@ -145,31 +106,10 @@ impl ClientState {
     }
 }
 
-
+use anyhow::anyhow;
 pub async fn run_client() -> Result<()> {
 
    
-    // let test = Test { 
-    //     int: 3
-    // };
-
-    // let mut serializer = AllocSerializer::<0>::default();
-    // serializer.serialize_value(&test).unwrap();
-    // let bytes = serializer.into_serializer().into_inner();
-
-    // // let bytes = rkyv::to_bytes::<_, 4>(&test).unwrap();
-
-    // let archived = rkyv::access::<Test>(&bytes[..]).unwrap();
-    // println!("Archived: {:?}", test.int);
-
-
-    // let proc = ProtocolMessage::Establish(1).to_bytes()?;
-    // println!("proc: {:?}", proc);
-
-    // let proc = ProtocolMessage::from_bytes(&proc[..])?;
-    // println!("DESERIALIZED");
-
-    // exit(1);
 
 
     configure_system_logger("logs");
@@ -177,52 +117,32 @@ pub async fn run_client() -> Result<()> {
 
 
 
-    // CONN_MAP.set(DashMap::new()).unwrap();
 
-
-    // if let Ok(mut stream) = TcpStream::connect("localhost:4032").await {
-    //     println!("Connecting to service.");
-
-
-    //     stream.write_all(&tokio::fs::read("request.txt").await.unwrap()).await.unwrap();
-    //     stream.write_all(b"\r\n").await.unwrap();
-    //     println!("WROTE OUT BYTES");
-
-    //     let buf: &mut [u8] = &mut [0u8; 8096];
-    //     while let Ok(data) = stream.read(buf).await {
-    //         if data == 0 {
-    //             println!("Done transmission.");
-    //             break;
-    //         }
-
-    //         println!("GOT SOME DATA");
-    //         // if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
-    //         //     id: msg.id.clone(),
-    //         //     data: buf[..data].to_vec()
-    //         // }).serialize().await {
-    //         //     println!("| -> Push {} bytes", pbytes.len());
-    //         //     ws_write.lock().await.send(Message::Binary(pbytes)).await.unwrap();
-    //         // }
-    //     }
-
-
-    // }
-
-
-    // exit(1);
-
-
+  
     info!("Starting client service...");
     let mut ws_stream = SequencedStream::new(TcpStream::connect("127.0.0.1:8000").await?);
     info!("Forwarding 127.0.0.1:{LOCAL_SERVICE_PORT} -> remote::/[{SERVICE_NAME}]");
 
 
+   // let mut service_port = 10_432;
     
 
 
     info!("Establishing connection...");
-    ws_stream.send(ProtocolMessage::Establish(0).to_bytes()?).await?;
+    ws_stream.send(ProtocolMessage::Establishment((10432, "http-server".to_string())).to_bytes()?).await?;
+    info!("Waiting for server to confirm uplink...");
+    let packet_data = ws_stream.recv().await?;
+    if let ArchivedProtocolMessage::Establishment((id, service_name)) = ProtocolMessage::from_bytes(&packet_data)? {
+        info!("Server confirmed with port [{id}] and service name [{service_name}].");
+        //service_port = *id;
+    } else {
+        error!("Failed to establish the connection with server.");
+        return Err(anyhow!("Connection failed."))?;
+    }
+    
     info!("Connection established.");
+
+
     
 
     let (mut read_end, write_end) = ws_stream.into_split();

@@ -5,6 +5,10 @@ use rkyv::{
     AlignedVec, Deserialize, Serialize,
 };
 
+pub struct HandleServer;
+pub struct HandleClient;
+pub struct HandleDuplex;
+
 #[derive(Archive, Deserialize, Serialize, PartialEq)]
 #[archive(check_bytes, compare(PartialEq))]
 pub enum ControlCode {
@@ -18,13 +22,16 @@ pub enum ControlCode {
 pub struct WebsocketMessage {
     pub id: u32,
     pub code: ControlCode,
-    pub data: Vec<u8>,
+    pub data: Vec<u8>
 }
 
 #[derive(Archive, Deserialize, Serialize)]
 #[archive(check_bytes)]
 pub enum ProtocolMessage {
-    Establish(u32),
+    /// Sends a requested port and a service name.
+    Establishment((u16, String)),
+
+    /// Sends a channel ID
     Open(u32),
     Message(WebsocketMessage)
 }

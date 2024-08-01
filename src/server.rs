@@ -9,20 +9,12 @@ use dashmap::DashMap;
 
 use rand::Rng;
 use rkyv::AlignedVec;
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::{Notify, OnceCell}};
-use tracing::{error, info};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UdpSocket}, sync::{Notify, OnceCell}};
+use tracing::info;
 
-use fastwebsockets::{upgrade::{self, UpgradeFut}, FragmentCollector, FragmentCollectorRead, Frame, Payload};
-use fastwebsockets::OpCode;
-use http_body_util::Empty;
-use hyper::body::Bytes;
-use hyper::body::Incoming;
-use hyper::server::conn::http1;
-use hyper::Request;
-use hyper::Response;
+use fastwebsockets::Frame;
 
-
-use crate::{commons::{configure_system_logger, WebsocketProxy, CHANNEL_SIZE}, protocol::{messages::{ArchivedControlCode, ArchivedProtocolMessage, ControlCode, ProtocolMessage, WebsocketMessage}, stream::SequencedStream}, sync::{coordinator::AsyncCoordinator, pubsub::Kraken}};
+use crate::{commons::{configure_system_logger, CHANNEL_SIZE}, protocol::{messages::{ArchivedProtocolMessage, ControlCode, ProtocolMessage, WebsocketMessage}, stream::SequencedStream}, sync::{coordinator::AsyncCoordinator, pubsub::Kraken}};
 
 pub const SERVER_CONTROL_PORT: u16 = 8001;
 pub const WEB_SERVER_PORT: u16 = 8000;
@@ -32,7 +24,7 @@ pub const WEB_SERVER_PORT: u16 = 8000;
 pub struct KubeportServer {
     //pub listener: Arc<TcpListener>,
 
-    pub link: DashMap<u32, Arc<Kraken>>,
+    pub link: DashMap<u16, Arc<Kraken>>,
     pub ids: HashSet<u32>
     // pub map: DashMap<String, WebsocketProxy>
 }
@@ -77,21 +69,7 @@ pub async fn run_kubeport_server(state: Arc<KubeportServer>) {
 
     // tokio::spawn(quic_server());
 
-    tokio::spawn({
-        let state = Arc::clone(&state);
-        async move {
-            loop {
-
-            
-            
-                let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], WEB_SERVER_PORT + 1))).await.unwrap();
-                let (conn, addr) = listener.accept().await.unwrap();
-                tokio::spawn(handle_tcp_pair(Arc::clone(&state), conn, addr));
-
-           
-            }
-        }
-    });
+    
 
 
 
@@ -102,9 +80,9 @@ pub async fn run_kubeport_server(state: Arc<KubeportServer>) {
 }
 
 
-pub async fn handle_tcp_pair(state: Arc<KubeportServer>, conn: TcpStream, addr: SocketAddr) -> Result<()> {
+pub async fn handle_tcp_pair(service_id: u16, state: Arc<KubeportServer>, conn: TcpStream, addr: SocketAddr) -> Result<()> {
     
-    let service_id = 0;
+
     let channel_id = state.issue_new_id();
     println!("New TCP pair with ID: {channel_id}");
 
@@ -185,7 +163,10 @@ pub async fn handle_tcp_pair(state: Arc<KubeportServer>, conn: TcpStream, addr: 
 }
 
 pub async fn start_websocket_server(state: Arc<KubeportServer>) {
+
+
     
+    // Working TCP
     let websocket_address = SocketAddr::from(([0, 0, 0, 0], WEB_SERVER_PORT));
     let listener = TcpListener::bind(&websocket_address).await.unwrap();
     info!("TCP server listening on {}...", websocket_address);
@@ -198,6 +179,36 @@ pub async fn start_websocket_server(state: Arc<KubeportServer>) {
 use anyhow::anyhow;
 
 
+// tokio::spawn({
+//     let state = Arc::clone(&state);
+//     async move {
+//         loop {
+
+        
+        
+//             let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], WEB_SERVER_PORT + 1))).await.unwrap();
+//             let (conn, addr) = listener.accept().await.unwrap();
+//             tokio::spawn(handle_tcp_pair(Arc::clone(&state), conn, addr));
+
+       
+//         }
+//     }
+// });
+
+
+pub async fn launch_tcp_server(state: Arc<KubeportServer>, listener: TcpListener) -> Result<()> {
+
+    //             let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], WEB_SERVER_PORT + 1))).await.unwrap();
+    info!("Waiting on {}...", listener.local_addr()?);
+    loop {
+        let (conn, addr) = listener.accept().await.unwrap();
+        tokio::spawn(handle_tcp_pair(listener.local_addr()?.port(), Arc::clone(&state), conn, addr));
+
+    }
+
+    Ok(())
+}
+
 pub async fn handle_server_conn(state: Arc<KubeportServer>, stream: TcpStream, addr: SocketAddr) -> Result<()> {
     info!("Received connection from {addr}.");
 
@@ -205,13 +216,27 @@ pub async fn handle_server_conn(state: Arc<KubeportServer>, stream: TcpStream, a
     let packet_date = read.recv().await?;
     let packet = ProtocolMessage::from_bytes(&packet_date)?;
     let service_id;
-    if let ArchivedProtocolMessage::Establish(id) = packet {
+    let service_name;
+    if let ArchivedProtocolMessage::Establishment((id, name)) = packet {
         state.link.insert(*id, Arc::new(Kraken::new(CHANNEL_SIZE)));
         info!("New service [{id}] started.");
         service_id = *id;
+        service_name = name.to_string();
     } else {
         return Err(anyhow!("Did not receive an establishment packet."));
     }
+
+
+    // Determine if the port is suitable.
+    let listener = match TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], service_id as u16))).await {
+        Ok(v) => v,
+        Err(_) => TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await?
+    };
+
+    write.send(ProtocolMessage::Establishment((listener.local_addr()?.port(), service_name)).to_bytes()?).await?;
+
+    tokio::spawn(launch_tcp_server(Arc::clone(&state), listener));
+
 
 
 
