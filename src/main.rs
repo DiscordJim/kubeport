@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use kubeport::{client::run_client, server::KubeportServer};
+use kubeport::{client::run_client, server::{KubeportServer}};
 
 
 #[derive(Parser, Debug)]

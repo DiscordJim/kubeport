@@ -44,59 +44,59 @@ pub fn configure_system_logger(path: impl AsRef<Path>) {
 }
 
 
-pub struct SimpleChannel<T>{
-    channel: (Sender<T>, Receiver<T>),
-    //pub shutdown: Arc<AsyncCoordinator>
-}
+// pub struct SimpleChannel<T>{
+//     channel: (Sender<T>, Receiver<T>),
+//     //pub shutdown: Arc<AsyncCoordinator>
+// }
 
 
 
-impl<T> Clone for SimpleChannel<T> {
-    fn clone(&self) -> Self {
-        Self {
-            channel: self.channel.clone(),
-            //shutdown: self.shutdown.clone()
-        }
-    }
-}
-impl<T> SimpleChannel<T> {
-    pub fn new(cap: usize) -> Self {
-        let channel =flume::bounded(cap);
-        Self {
-            channel,
-            //shutdown: Arc::new(AsyncCoordinator::new())
-        }
-    }
-    pub async fn send(&self, msg: T) -> Result<()> {
-        // if self.shutdown.is_shutdown() {
-        //     Err(anyhow!("Channel is already shutdown."))?
-        // }
-        Ok(tokio::select! {
-            m = self.channel.0.send_async(msg) => {
-                println!("We did send message");
-                m
-            },
-            // _ = self.shutdown.wait_on_change() => {
-            //     Err(anyhow!("Channel shutdown."))?
-            // }
-        }.map_err(|e| anyhow!("Send failure: {e}"))?)
+// impl<T> Clone for SimpleChannel<T> {
+//     fn clone(&self) -> Self {
+//         Self {
+//             channel: self.channel.clone(),
+//             //shutdown: self.shutdown.clone()
+//         }
+//     }
+// }
+// impl<T> SimpleChannel<T> {
+//     pub fn new(cap: usize) -> Self {
+//         let channel =flume::bounded(cap);
+//         Self {
+//             channel,
+//             //shutdown: Arc::new(AsyncCoordinator::new())
+//         }
+//     }
+//     pub async fn send(&self, msg: T) -> Result<()> {
+//         // if self.shutdown.is_shutdown() {
+//         //     Err(anyhow!("Channel is already shutdown."))?
+//         // }
+//         Ok(tokio::select! {
+//             m = self.channel.0.send_async(msg) => {
+//                 println!("We did send message");
+//                 m
+//             },
+//             // _ = self.shutdown.wait_on_change() => {
+//             //     Err(anyhow!("Channel shutdown."))?
+//             // }
+//         }.map_err(|e| anyhow!("Send failure: {e}"))?)
         
-       // self.channel.0.send_async(msg).await
-    }
-    pub async fn recv(&self) -> Result<T> {
-        // if self.shutdown.is_shutdown() {
-        //     Err(anyhow!("Channel is already shutdown."))?
-        // }
-        Ok(tokio::select! {
-            m = self.channel.1.recv_async() => m,
-            // _ = self.shutdown.wait_on_change() => {
-            //     Err(anyhow!("Channel shutdown."))?
-            // }
-        }.map_err(|e| anyhow!("Send failure: {e}"))?)
+//        // self.channel.0.send_async(msg).await
+//     }
+//     pub async fn recv(&self) -> Result<T> {
+//         // if self.shutdown.is_shutdown() {
+//         //     Err(anyhow!("Channel is already shutdown."))?
+//         // }
+//         Ok(tokio::select! {
+//             m = self.channel.1.recv_async() => m,
+//             // _ = self.shutdown.wait_on_change() => {
+//             //     Err(anyhow!("Channel shutdown."))?
+//             // }
+//         }.map_err(|e| anyhow!("Send failure: {e}"))?)
         
-        // self.channel.1.recv_async().await
-    }
-}
+//         // self.channel.1.recv_async().await
+//     }
+// }
 
 // pub struct ChannelDistributor<U, T>
 //     where
