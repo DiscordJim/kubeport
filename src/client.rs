@@ -1,26 +1,21 @@
 
 
-use std::{net::SocketAddr, process::exit, str::from_utf8};
+use std::{net::SocketAddr, process::exit, str::from_utf8, sync::Arc};
 
 use anyhow::Result;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use once_cell::sync::OnceCell;
 use rkyv::{ser::{serializers::AllocSerializer, Serializer}, AlignedVec, Archive, Deserialize, Serialize};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::OwnedWriteHalf, TcpStream}, sync::Mutex};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::{OwnedReadHalf, OwnedWriteHalf}, TcpStream}, sync::Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{error, info};
 use uuid7::Uuid;
 
-use crate::{commons::configure_system_logger, protocol::{messages::{ArchivedProtocolMessage, ControlCode, ProtocolMessage, WebsocketMessage}, stream::SequencedStream}};
+use crate::{commons::configure_system_logger, protocol::{messages::{ArchivedProtocolMessage, ControlCode, ProtocolMessage, WebsocketMessage}, stream::{SequencedRead, SequencedStream, SequencedWrite}}};
 
 
-#[derive(Debug)]
-pub struct ConnectionState {
-    stream: TcpStream
-}
 
-static CONN_MAP: OnceCell<DashMap<u32, ConnectionState>> = OnceCell::new();
 
 
 
@@ -28,65 +23,102 @@ static CONN_MAP: OnceCell<DashMap<u32, ConnectionState>> = OnceCell::new();
 const SERVICE_NAME: &str = "name";
 const LOCAL_SERVICE_PORT: u16 = 4032;
 
-pub async fn handle_message(ws_stream: &mut SequencedStream, bytes: AlignedVec) -> Result<()> {
+const BUFFER_SIZE: usize = 4096;
+
+
+pub async fn handle_socket_reading(state: Arc<ClientState>, id: u32) -> Result<()> {
+
+    loop {
+        println!("Reading socket");
+        let buf = &mut [0u8; BUFFER_SIZE];
+        let bytes = state.read_map.get_mut(&id).unwrap().read(buf).await?;
+
+        println!("Receiving {}", bytes);
+        if bytes == 0 {
+            println!("TCP connection closed.");
+            break;
+        }
+        state.write_end.lock().await.send(ProtocolMessage::Message(WebsocketMessage {
+            id,
+            code: ControlCode::Neutral,
+            data: Vec::from(&buf[..bytes])
+        }).to_bytes()?).await?;
+        
+
+
+    }
+    Ok(())
+}
+
+pub async fn start_new_connection(state: &Arc<ClientState>, id: u32) -> Result<()> {
+    info!("Received request to open up.");
+    if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
+        info!("Succesfully opened a new stream.");
+        let (read, write) = stream.into_split();
+        state.write_map.insert(id, write);
+        state.read_map.insert(id, read);
+
+        tokio::spawn(handle_socket_reading(Arc::clone(state), id));
+        // CONN_MAP.get().unwrap().insert(*id, ConnectionState {
+        //     stream
+        // });
+    }
+    Ok(())
+} 
+
+
+
+pub async fn handle_message(state: &Arc<ClientState>,  bytes: AlignedVec) -> Result<()> {
     
 
-    let mut nv = AlignedVec::new();
-    nv.extend_from_slice(&bytes);
+    // let mut nv = AlignedVec::new();
+    // nv.extend_from_slice(&bytes);
 
-    let bytes = nv;
+    // let bytes = nv;
 
 
     match ProtocolMessage::from_bytes(&bytes)? {
-        ArchivedProtocolMessage::Open(id) => {
-            info!("Received request to open up.");
-            if let Ok(stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
-                info!("Succesfully opened a new stream.");
-                CONN_MAP.get().unwrap().insert(*id, ConnectionState {
-                    stream
-                });
-            }
-            
-        },
+        ArchivedProtocolMessage::Open(id) => start_new_connection(&state, *id).await?,
         ArchivedProtocolMessage::Message(msg) => {
-
-            // if let Ok(mut stream) = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], LOCAL_SERVICE_PORT))).await {
-            //     println!("Connecting to service.");
+            state.send(msg.id, &msg.data).await?;
 
 
-            let stream = &mut CONN_MAP.get().unwrap().get_mut(&msg.id).unwrap().stream;
+          
 
-                stream.write_all(&msg.data).await.unwrap();
-                println!("SENT BYTES.");
 
-                let buf: &mut [u8] = &mut [0u8; 8096];
-                while let Ok(data) = stream.read(buf).await {
-                    if data == 0 {
-                        info!("Done transmission.");
+            // let stream = &mut CONN_MAP.get().unwrap().get_mut(&msg.id).unwrap().stream;
 
-                        let protocol = ProtocolMessage::Message(WebsocketMessage {
-                            id: msg.id.clone(),
-                            code: ControlCode::Close,
-                            data: Vec::new()
-                        });
+            //     stream.write_all(&msg.data).await.unwrap();
+            //     println!("SENT BYTES.");
 
-                        ws_stream.send(protocol.to_bytes()?).await?;
-                        //ws_stream.send(Message::Binary(protocol.to_bytes().unwrap().into_vec())).await.unwrap();
-                        println!("send");
-                        break;
-                    }
-                    if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
-                        id: msg.id.clone(),
-                        code: ControlCode::Neutral,
-                        data: buf[..data].to_vec()
-                    }).to_bytes() {
-                        println!("| -> Push {} bytes", pbytes.len());
-                       println!("| MESSAGE: {:?}", from_utf8(&buf[..data]));
-                       ws_stream.send(pbytes).await?;
-                        // ws_stream.send(Message::Binary(pbytes.into_vec())).await.unwrap();
-                    }
-                }
-                println!("Bro");
+            //     let buf: &mut [u8] = &mut [0u8; 8096];
+            //     while let Ok(data) = stream.read(buf).await {
+            //         if data == 0 {
+            //             info!("Done transmission.");
+
+            //             let protocol = ProtocolMessage::Message(WebsocketMessage {
+            //                 id: msg.id.clone(),
+            //                 code: ControlCode::Close,
+            //                 data: Vec::new()
+            //             });
+
+            //             ws_stream.send(protocol.to_bytes()?).await?;
+            //             //ws_stream.send(Message::Binary(protocol.to_bytes().unwrap().into_vec())).await.unwrap();
+            //             println!("send");
+            //             break;
+            //         }
+            //         if let Ok(pbytes) = ProtocolMessage::Message(WebsocketMessage {
+            //             id: msg.id.clone(),
+            //             code: ControlCode::Neutral,
+            //             data: buf[..data].to_vec()
+            //         }).to_bytes() {
+            //             println!("| -> Push {} bytes", pbytes.len());
+            //            println!("| MESSAGE: {:?}", from_utf8(&buf[..data]));
+            //            ws_stream.send(pbytes).await?;
+            //             // ws_stream.send(Message::Binary(pbytes.into_vec())).await.unwrap();
+            //         }
+            //     }
+            
             // }
         },
         _ => {}
@@ -98,15 +130,25 @@ pub async fn handle_message(ws_stream: &mut SequencedStream, bytes: AlignedVec) 
 
 use anyhow::Error;
 
-#[derive(Archive, Deserialize, Serialize)]
-#[archive(check_bytes)]
-pub struct Test {
-    int: u8
+
+pub struct ClientState {
+    write_map: DashMap<u32, OwnedWriteHalf>,
+    read_map: DashMap<u32, OwnedReadHalf>,
+    write_end: Mutex<SequencedWrite>,
+}
+
+
+impl ClientState {
+    pub async fn send(&self, id: u32, bytes: &[u8]) -> Result<()> {
+        self.write_map.get_mut(&id).unwrap().write_all(bytes).await?;
+        Ok(())
+    }
 }
 
 
 pub async fn run_client() -> Result<()> {
 
+   
     // let test = Test { 
     //     int: 3
     // };
@@ -135,7 +177,7 @@ pub async fn run_client() -> Result<()> {
 
 
 
-    CONN_MAP.set(DashMap::new()).unwrap();
+    // CONN_MAP.set(DashMap::new()).unwrap();
 
 
     // if let Ok(mut stream) = TcpStream::connect("localhost:4032").await {
@@ -171,8 +213,11 @@ pub async fn run_client() -> Result<()> {
 
 
     info!("Starting client service...");
-    let ws_stream = &mut SequencedStream::new(TcpStream::connect("127.0.0.1:8000").await?);
+    let mut ws_stream = SequencedStream::new(TcpStream::connect("127.0.0.1:8000").await?);
     info!("Forwarding 127.0.0.1:{LOCAL_SERVICE_PORT} -> remote::/[{SERVICE_NAME}]");
+
+
+    
 
 
     info!("Establishing connection...");
@@ -180,13 +225,23 @@ pub async fn run_client() -> Result<()> {
     info!("Connection established.");
     
 
+    let (mut read_end, write_end) = ws_stream.into_split();
 
 
-    // loop {
-    //     let packet = ws_stream.recv().await?;
-    //     handle_message(ws_stream, packet).await?;
+    let state = Arc::new(ClientState {
+        write_map: DashMap::new(),
+        read_map: DashMap::new(),
+        write_end: Mutex::new(write_end)
+    });
 
-    // }
+
+
+
+    loop {
+        let packet = read_end.recv().await?;
+        handle_message(&state ,packet).await?;
+
+    }
 
         Ok(())
     

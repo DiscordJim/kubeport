@@ -29,6 +29,9 @@ impl SequencedStream {
         })
 
     }
+    pub fn into_split(self) -> (SequencedRead, SequencedWrite) {
+        (self.read, self.write)
+    }
     pub async fn send(&mut self, packet: AlignedVec) -> Result<()> {
         self.write.send(packet).await
     }
