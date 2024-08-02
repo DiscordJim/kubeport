@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
-use rkyv::Archive;
+use rkyv::{AlignedBytes, Archive};
 use rkyv::{
     ser::{serializers::AllocSerializer, Serializer},
     AlignedVec, Deserialize, Serialize,
 };
 
-pub struct HandleServer;
-pub struct HandleClient;
-pub struct HandleDuplex;
+use crate::sync::distributed::{IntoPacket, LightPacket};
+
+
 
 #[derive(Archive, Deserialize, Serialize, PartialEq)]
 #[archive(check_bytes, compare(PartialEq))]
@@ -21,7 +21,7 @@ pub enum ControlCode {
 #[archive(check_bytes)]
 pub struct WebsocketMessage {
     pub id: u32,
-    pub code: ControlCode,
+ //   pub code: ControlCode,
     pub data: Vec<u8>
 }
 
@@ -50,3 +50,14 @@ impl ProtocolMessage {
 }
 
 
+impl IntoPacket<ProtocolMessage> for ProtocolMessage {
+    fn packetify(self) -> Result<LightPacket<ProtocolMessage>> {
+        Ok(LightPacket::new(self)?)
+    }
+}
+
+impl IntoPacket<ProtocolMessage> for AlignedVec {
+    fn packetify(self) -> Result<LightPacket<ProtocolMessage>> {
+        Ok(LightPacket::from_bytes(self))
+    } 
+}

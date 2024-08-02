@@ -17,7 +17,7 @@ use tracing_subscriber::{fmt::Layer, layer::SubscriberExt, util::SubscriberInitE
 use uuid7::Uuid;
 use anyhow::anyhow;
 
-use crate::{protocol::messages::{ProtocolMessage, WebsocketMessage}, sync::{coordinator::AsyncCoordinator, distributed::FastDistributedSPMC}};
+use crate::{protocol::messages::{ProtocolMessage, WebsocketMessage}, sync::coordinator::AsyncCoordinator};
 
 pub const CHANNEL_SIZE: usize = 10;
 
@@ -144,23 +144,23 @@ pub fn configure_system_logger(path: impl AsRef<Path>) {
 // }
 
 
-pub struct WebsocketProxy {
-    communicator: (Sender<ProtocolMessage>, Receiver<ProtocolMessage>),
-    coordinator: Arc<AsyncCoordinator>,
-    //distributor: Arc<ChannelDistributor<Uuid, WebsocketMessage>>
-    distributor: Arc<FastDistributedSPMC<u32, WebsocketMessage>>
-    //recv: Receiver<WebsocketMessage>
-}
+// pub struct WebsocketProxy {
+//     communicator: (Sender<ProtocolMessage>, Receiver<ProtocolMessage>),
+//     coordinator: Arc<AsyncCoordinator>,
+//     //distributor: Arc<ChannelDistributor<Uuid, WebsocketMessage>>
+//     distributor: Arc<FastDistributedSPMC<u32, WebsocketMessage>>
+//     //recv: Receiver<WebsocketMessage>
+// }
 
-impl Clone for WebsocketProxy {
-    fn clone(&self) -> Self {
-        Self {
-            coordinator: Arc::clone(&self.coordinator),
-            communicator: self.communicator.clone(),
-            distributor: Arc::clone(&self.distributor)
-        }
-    }
-}
+// impl Clone for WebsocketProxy {
+//     fn clone(&self) -> Self {
+//         Self {
+//             coordinator: Arc::clone(&self.coordinator),
+//             communicator: self.communicator.clone(),
+//             distributor: Arc::clone(&self.distributor)
+//         }
+//     }
+// }
 
 
 

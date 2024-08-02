@@ -1,20 +1,20 @@
-use std::vec;
+use std::{os::windows::io::AsSocket, vec};
 
 use rkyv::{ser::serializers::AllocSerializer, AlignedVec, Archive, Archived, CheckBytes, Deserialize};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::{OwnedReadHalf, OwnedWriteHalf, ReadHalf, WriteHalf}, TcpStream}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::{OwnedReadHalf, OwnedWriteHalf, ReadHalf, WriteHalf}, TcpStream, UdpSocket}};
 
 use anyhow::Result;
 
 
 
-pub struct SequencedStream {
+pub struct SequencedTcpStream {
     read: SequencedRead,
     write: SequencedWrite
 }
 
-impl SequencedStream {
+impl SequencedTcpStream {
     pub fn new(stream: TcpStream) -> Self {
-        let (read, write) = SequencedStream::split(stream);
+        let (read, write) = SequencedTcpStream::split(stream);
         Self {
             read, write
         }
@@ -32,7 +32,7 @@ impl SequencedStream {
     pub fn into_split(self) -> (SequencedRead, SequencedWrite) {
         (self.read, self.write)
     }
-    pub async fn send(&mut self, packet: AlignedVec) -> Result<()> {
+    pub async fn send(&mut self, packet: &AlignedVec) -> Result<()> {
         self.write.send(packet).await
     }
     pub async fn recv(&mut self) -> Result<AlignedVec> {
@@ -83,10 +83,10 @@ impl SequencedWrite {
         self.write_half.write_all(bytes).await?;
         Ok(())
     }
-    pub async fn send(&mut self, packet: AlignedVec) -> Result<()> {
+    pub async fn send(&mut self, packet: &AlignedVec) -> Result<()> {
         // println!("Packet length: {:?} {:?}", packet.len(), packet.as_ref());
         self.write_half.write_u32_le(packet.len().try_into()?).await?;
-        self.write_half.write_all(packet.as_ref()).await?;
+        self.write_half.write_all(packet).await?;
         Ok(())
     }
 }
@@ -101,7 +101,7 @@ mod tests {
     use rkyv::AlignedVec;
     use tokio::net::{TcpListener, TcpStream};
 
-    use crate::protocol::stream::SequencedStream;
+    use crate::protocol::stream::SequencedTcpStream;
 
 
     #[tokio::test]
@@ -117,7 +117,7 @@ mod tests {
 
             async move {
 
-                let mut stream = SequencedStream::new(TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], allocated_port))).await.unwrap());
+                let mut stream = SequencedTcpStream::new(TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], allocated_port))).await.unwrap());
                 
                 let mut vec = AlignedVec::new();
                 vec.push(32);
@@ -125,15 +125,15 @@ mod tests {
                 let mut vec2 = AlignedVec::new();
                 vec2.push(45);
                 
-                stream.send(vec).await.unwrap();
-                stream.send(vec2).await.unwrap();
+                stream.send(&vec).await.unwrap();
+                stream.send(&vec2).await.unwrap();
 
                 // println!("HI {:?}", stream.recv().await.unwrap());
 
             }
         });
 
-        let mut conn = SequencedStream::new(listener.accept().await?.0);
+        let mut conn = SequencedTcpStream::new(listener.accept().await?.0);
 
 
         assert_eq!(*conn.recv().await?.first().unwrap(), 32);

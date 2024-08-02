@@ -1,2 +1,2 @@
-use super::stream::SequencedStream;
+use super::stream::SequencedTcpStream;
 

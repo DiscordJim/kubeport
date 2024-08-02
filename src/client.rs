@@ -7,12 +7,12 @@ use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use once_cell::sync::OnceCell;
 use rkyv::{ser::{serializers::AllocSerializer, Serializer}, AlignedVec, Archive, Deserialize, Serialize};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::{OwnedReadHalf, OwnedWriteHalf}, TcpStream}, sync::Mutex};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{tcp::{OwnedReadHalf, OwnedWriteHalf}, TcpStream, UdpSocket}, sync::Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{error, info};
 use uuid7::Uuid;
 
-use crate::{commons::configure_system_logger, protocol::{messages::{ArchivedProtocolMessage, ControlCode, ProtocolMessage, WebsocketMessage}, stream::{SequencedRead, SequencedStream, SequencedWrite}}};
+use crate::{commons::configure_system_logger, protocol::{messages::{ArchivedProtocolMessage, ControlCode, ProtocolMessage, WebsocketMessage}, stream::{SequencedRead, SequencedTcpStream, SequencedWrite}}};
 
 
 
@@ -38,9 +38,9 @@ pub async fn handle_socket_reading(state: Arc<ClientState>, id: u32) -> Result<(
             println!("TCP connection closed.");
             break;
         }
-        state.write_end.lock().await.send(ProtocolMessage::Message(WebsocketMessage {
+        state.write_end.lock().await.send(&ProtocolMessage::Message(WebsocketMessage {
             id,
-            code: ControlCode::Neutral,
+            //code: ControlCode::Neutral,
             data: Vec::from(&buf[..bytes])
         }).to_bytes()?).await?;
         
@@ -117,10 +117,8 @@ pub async fn run_client() -> Result<()> {
 
 
 
-
-  
     info!("Starting client service...");
-    let mut ws_stream = SequencedStream::new(TcpStream::connect("127.0.0.1:8000").await?);
+    let mut ws_stream = SequencedTcpStream::new(TcpStream::connect("127.0.0.1:8000").await?);
     info!("Forwarding 127.0.0.1:{LOCAL_SERVICE_PORT} -> remote::/[{SERVICE_NAME}]");
 
 
@@ -129,7 +127,7 @@ pub async fn run_client() -> Result<()> {
 
 
     info!("Establishing connection...");
-    ws_stream.send(ProtocolMessage::Establishment((10432, "http-server".to_string())).to_bytes()?).await?;
+    ws_stream.send(&ProtocolMessage::Establishment((10432, "http-server".to_string())).to_bytes()?).await?;
     info!("Waiting for server to confirm uplink...");
     let packet_data = ws_stream.recv().await?;
     if let ArchivedProtocolMessage::Establishment((id, service_name)) = ProtocolMessage::from_bytes(&packet_data)? {
